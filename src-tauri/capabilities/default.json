@@ -1,0 +1,33 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "sniffer-remote-access",
+  "description": "允许嗅探窗口中的外部网页向后端发送拦截事件",
+  "windows": [
+    "sniffer_window",
+    "main"
+  ],
+  "webviews": [
+    "sniffer_window",
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "http://**",
+      "https://**",
+      "http://*/*",
+      "https://*/*"
+    ]
+  },
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "dialog:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-create",
+    "core:webview:allow-create-webview",
+    "core:webview:allow-create-webview-window"
+  ]
+}

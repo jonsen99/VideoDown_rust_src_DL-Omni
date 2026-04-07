@@ -1,0 +1,16 @@
+.DS_Store
+node_modules
+/build
+/.svelte-kit
+/package
+.env
+.env.*
+!.env.example
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+/01.md
+/03项目代码生成文件.py
+/.idea/.gitignore
+/.idea/dl-omni.iml
+/.idea/modules.xml
+/.idea/vcs.xml

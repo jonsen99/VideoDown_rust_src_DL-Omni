@@ -1,0 +1,40 @@
+[package]
+name = "dl-omni"
+version = "0.1.0"
+description = "A high-performance media downloader based on Tauri 2 & Svelte 5."
+authors = ["DL-Omni Team"]
+edition = "2021"
+
+[lib]
+name = "dl_omni_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-dialog = "2"
+
+# 序列化
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# 异步运行环境
+tokio = { version = "1", features = ["full"] }
+futures-util = "0.3"
+
+# 数据库
+rusqlite = { version = "0.32.0", features = ["bundled"] }
+
+# HTTP 请求与多线程下载
+reqwest = { version = "0.12", features = ["stream", "json", "rustls-tls"] }
+bytes = "1.5"
+
+# 实用工具
+uuid = { version = "1.8", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1.10"

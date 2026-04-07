@@ -1,0 +1,181 @@
+use std::process::Stdio;
+use tokio::process::Command;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tauri::AppHandle;
+use regex::Regex;
+use crate::models::{MediaInfo, Task, TaskStatus};
+use crate::state::{AppState, TaskProgressUpdate};
+use crate::utils;
+
+/// 调用 yt-dlp -J 解析链接的元数据
+pub async fn parse_media_info(url: &str, app: AppHandle) -> Result<MediaInfo, String> {
+    let ytdlp_path = utils::get_ytdlp_path(&app)?;
+
+    let output = Command::new(&ytdlp_path)
+        .arg("--dump-json")
+        .arg("--no-playlist")
+        .arg(url)
+        .output()
+        .await
+        .map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("yt-dlp error: {}", err));
+    }
+
+    let json_str = String::from_utf8_lossy(&output.stdout);
+    let v: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
+
+    Ok(MediaInfo {
+        id: v["id"].as_str().unwrap_or("").to_string(),
+        title: v["title"].as_str().unwrap_or("Unknown Title").to_string(),
+        duration: v["duration"].as_f64().unwrap_or(0.0),
+        thumbnail: v["thumbnail"].as_str().unwrap_or("").to_string(),
+        formats: vec![],
+    })
+}
+
+/// 辅助函数：将带单位的尺寸转换为字节数
+fn parse_size_to_bytes(val: f64, unit: &str) -> u64 {
+    let multiplier = if unit.contains("GiB") || unit.contains("G") {
+        1024.0 * 1024.0 * 1024.0
+    } else if unit.contains("MiB") || unit.contains("M") {
+        1024.0 * 1024.0
+    } else if unit.contains("KiB") || unit.contains("K") {
+        1024.0
+    } else {
+        1.0
+    };
+    (val * multiplier) as u64
+}
+
+/// 辅助函数：解析 ETA 时间 (如 "01:20" -> 80s)
+fn parse_eta(eta_str: &str) -> u64 {
+    let parts: Vec<&str> = eta_str.split(':').collect();
+    let mut seconds = 0;
+    let mut multiplier = 1;
+    for part in parts.iter().rev() {
+        if let Ok(val) = part.parse::<u64>() {
+            seconds += val * multiplier;
+            multiplier *= 60;
+        }
+    }
+    seconds
+}
+
+/// 核心：通过 yt-dlp 子进程下载，并拦截标准输出进行进度广播
+pub async fn download_via_ytdlp(app: AppHandle, state: AppState, task: &Task) -> Result<u64, String> {
+    let ytdlp_path = utils::get_ytdlp_path(&app)?;
+
+    let (save_dir, max_threads) = {
+        let config = state.config.lock().await;
+        (config.settings.default_download_path.clone(), config.settings.max_threads_per_task.max(1))
+    };
+
+    let mut child = Command::new(&ytdlp_path)
+        .arg("-f")
+        .arg(&task.format_id)
+        .arg("--merge-output-format")
+        .arg("mp4")
+        .arg("-P")
+        .arg(save_dir)
+        .arg("--concurrent-fragments")
+        .arg(max_threads.to_string())
+        .arg("--newline")
+        .arg(&task.url)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    let stdout = child.stdout.take().expect("Failed to open stdout");
+    let mut reader = BufReader::new(stdout).lines();
+
+    // 采用宽容解析策略：拆分正则，规避 Unknown 导致的一刀切失败
+    let re_pct = Regex::new(r"\[download\]\s+(?P<pct>[0-9\.]+)%").unwrap();
+    let re_frag = Regex::new(r"Frag\s+(?P<cur>\d+)/(?P<tot>\d+)").unwrap();
+    let re_size = Regex::new(r"of\s+[~]?(?P<size>[0-9\.]+)(?P<unit>[a-zA-Z]+)").unwrap();
+    let re_speed = Regex::new(r"at\s+(?P<speed>[0-9\.]+)(?P<unit>[a-zA-Z/]+)").unwrap();
+    let re_eta = Regex::new(r"ETA\s+(?P<eta>[0-9:]+)").unwrap();
+
+    let re_dest = Regex::new(r"\[download\] Destination:\s+(?P<path>.+)").unwrap();
+    let re_merge = Regex::new(r#"\[Merger\] Merging formats into "(?P<path>[^"]+)""#).unwrap();
+    let re_already = Regex::new(r"\[download\]\s+(?P<path>.*) has already been downloaded").unwrap();
+
+    let mut current_total_bytes = task.total_bytes;
+    let mut current_speed = 0.0;
+    let mut current_eta = 0;
+    let mut final_path: Option<String> = None;
+
+    while let Some(line) = reader.next_line().await.unwrap_or(None) {
+        if let Some(caps) = re_merge.captures(&line) {
+            final_path = Some(caps.name("path").unwrap().as_str().to_string());
+        } else if let Some(caps) = re_dest.captures(&line) {
+            final_path = Some(caps.name("path").unwrap().as_str().to_string());
+        } else if let Some(caps) = re_already.captures(&line) {
+            final_path = Some(caps.name("path").unwrap().as_str().to_string());
+        }
+
+        let mut pct: Option<f64> = None;
+
+        if let Some(caps_pct) = re_pct.captures(&line) {
+            pct = caps_pct.name("pct").unwrap().as_str().parse().ok();
+        } else if let Some(caps_frag) = re_frag.captures(&line) {
+            if let (Ok(cur), Ok(tot)) = (
+                caps_frag.name("cur").unwrap().as_str().parse::<f64>(),
+                caps_frag.name("tot").unwrap().as_str().parse::<f64>()
+            ) {
+                if tot > 0.0 { pct = Some((cur / tot) * 100.0); }
+            }
+        }
+
+        if let Some(p) = pct {
+            if let Some(caps_size) = re_size.captures(&line) {
+                if let Ok(size_val) = caps_size.name("size").unwrap().as_str().parse::<f64>() {
+                    let unit = caps_size.name("unit").unwrap().as_str();
+                    current_total_bytes = parse_size_to_bytes(size_val, unit);
+                }
+            }
+
+            if let Some(caps_speed) = re_speed.captures(&line) {
+                if let Ok(speed_val) = caps_speed.name("speed").unwrap().as_str().parse::<f64>() {
+                    let unit = caps_speed.name("unit").unwrap().as_str();
+                    current_speed = parse_size_to_bytes(speed_val, unit) as f64;
+                }
+            }
+
+            if let Some(caps_eta) = re_eta.captures(&line) {
+                current_eta = parse_eta(caps_eta.name("eta").unwrap().as_str());
+            }
+
+            let (dl_bytes, t_bytes) = if current_total_bytes > 0 {
+                ((current_total_bytes as f64 * (p / 100.0)) as u64, current_total_bytes)
+            } else {
+                (p as u64, 0)
+            };
+
+            let mut buffer = state.progress_buffer.lock().await;
+            buffer.push(TaskProgressUpdate {
+                id: task.id.clone(),
+                downloaded_bytes: dl_bytes,
+                total_bytes: t_bytes,
+                speed: current_speed,
+                eta: current_eta,
+                status: TaskStatus::Downloading,
+            });
+        }
+    }
+
+    let status = child.wait().await.map_err(|e| e.to_string())?;
+    if !status.success() { return Err("Download process exited with error".into()); }
+
+    if let Some(path) = final_path {
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            let actual_size = metadata.len();
+            if actual_size > 0 { current_total_bytes = actual_size; }
+        }
+    }
+
+    Ok(current_total_bytes)
+}
