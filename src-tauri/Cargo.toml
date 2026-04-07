@@ -1,5 +1,5 @@
 [package]
-name = "dl-omni"
+name = "src-tauri"
 version = "0.1.0"
 description = "A high-performance media downloader based on Tauri 2 & Svelte 5."
 authors = ["DL-Omni Team"]
