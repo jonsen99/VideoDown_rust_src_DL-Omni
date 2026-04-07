@@ -11,11 +11,15 @@ use crate::utils;
 pub async fn parse_media_info(url: &str, app: AppHandle) -> Result<MediaInfo, String> {
     let ytdlp_path = utils::get_ytdlp_path(&app)?;
 
-    let output = Command::new(&ytdlp_path)
-        .arg("--dump-json")
+    let mut cmd = Command::new(&ytdlp_path);
+    cmd.arg("--dump-json")
         .arg("--no-playlist")
-        .arg(url)
-        .output()
+        .arg(url);
+
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+
+    let output = cmd.output()
         .await
         .map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
 
@@ -73,8 +77,8 @@ pub async fn download_via_ytdlp(app: AppHandle, state: AppState, task: &Task) ->
         (config.settings.default_download_path.clone(), config.settings.max_threads_per_task.max(1))
     };
 
-    let mut child = Command::new(&ytdlp_path)
-        .arg("-f")
+    let mut cmd = Command::new(&ytdlp_path);
+    cmd.arg("-f")
         .arg(&task.format_id)
         .arg("--merge-output-format")
         .arg("mp4")
@@ -85,8 +89,12 @@ pub async fn download_via_ytdlp(app: AppHandle, state: AppState, task: &Task) ->
         .arg("--newline")
         .arg(&task.url)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .stderr(Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000);
+
+    let mut child = cmd.spawn()
         .map_err(|e| e.to_string())?;
 
     let stdout = child.stdout.take().expect("Failed to open stdout");

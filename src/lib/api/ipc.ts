@@ -8,8 +8,8 @@ export const IPC = {
     return await invoke<MediaInfo>('parse_url', { url });
   },
 
-  async createTask(url: string, formatId: string): Promise<string> {
-    return await invoke<string>('create_task', { url, formatId });
+  async createTask(url: string, title: string, thumbnail: string | undefined, formatId: string): Promise<string> {
+    return await invoke<string>('create_task', { url, title, thumbnail, formatId });
   },
 
   async pauseTask(taskId: string): Promise<void> {

@@ -15,12 +15,14 @@ pub async fn parse_url(url: String, app: AppHandle) -> Result<MediaInfo, String>
 #[command]
 pub async fn create_task(
     url: String, 
+    title: String,
+    thumbnail: Option<String>,
     format_id: String, 
     app: AppHandle, 
     state: State<'_, AppState>
 ) -> Result<String, String> {
     let task_id = uuid::Uuid::new_v4().to_string();
-    let new_task = Task::new(task_id.clone(), url.clone(), format_id.clone());
+    let new_task = Task::new(task_id.clone(), url.clone(), title, thumbnail, format_id.clone());
     
     {
         let db = state.db.lock().await;

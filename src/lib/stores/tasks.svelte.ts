@@ -116,15 +116,17 @@ class TaskStore {
       const includeAudio = configStore.settings.include_audio;
       const formatId = includeAudio ? "bv*+ba/b" : "bv*"; 
       
-      const taskId = await IPC.createTask(url, formatId);
+      const title = info.title || "未知标题";
+      const thumbnail: string | undefined = info.thumbnail || undefined;
+      const taskId = await IPC.createTask(url, title, thumbnail, formatId);
       
       if (this.tasks[tempId]) {
         this.remove(tempId);
         this.add({
           id: taskId,
           url: url,
-          title: info.title || "未知标题",
-          thumbnail: info.thumbnail || undefined,
+          title: title,
+          thumbnail: thumbnail,
           status: 'pending',
           format_id: formatId,
           total_bytes: 0,

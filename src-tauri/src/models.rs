@@ -28,12 +28,12 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn new(id: String, url: String, format_id: String) -> Self {
+    pub fn new(id: String, url: String, title: String, thumbnail: Option<String>, format_id: String) -> Self {
         Self {
             id,
             url,
-            title: String::from("解析中..."),
-            thumbnail: None,
+            title,
+            thumbnail,
             status: TaskStatus::Pending,
             format_id,
             total_bytes: 0,
