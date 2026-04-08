@@ -20,7 +20,11 @@ export interface Task {
   status: TaskStatus;        // 当前状态
   format_id: string;         // 用户选择的 yt-dlp format_id
   playlist_items?: string;   // 合集下载范围 (如 "1,3,5-7")
-  http_headers?: string;     // 【新增】绑定的自定义 HTTP 请求头 (JSON 字符串格式)
+  
+  // 【重要】绑定的自定义 HTTP 请求头 (JSON 字符串格式)。
+  // 如果任务是由多级嗅探器捕获，此处将包含突破防盗链所需的完整鉴权信息（包含且不限于 Cookie, Referer 等）
+  http_headers?: string;     
+
   total_bytes: number;       // 文件总大小 (字节)
   downloaded_bytes: number;  // 已下载大小 (字节)
   speed: number;             // 当前下载速度 (Bytes/s)
@@ -83,11 +87,13 @@ export interface MediaInfo {
 }
 
 /**
- * 【新增】高级嗅探器捕获的资源数据结构
+ * 猫抓级嗅探器捕获的资源数据结构
  */
 export interface SniffedResource {
   url: string;
-  type: string;
+  type: string;             // 如 "video", "media (octet-stream)" 等
   filename: string;
-  headers?: Record<string, string>; // 动态提取的请求头集合
+  
+  // 动态提取的请求头集合，极大概率包含突破 PikPak / 阿里云盘 / B站等限制的 Cookie 与 Referer
+  headers?: Record<string, string>; 
 }

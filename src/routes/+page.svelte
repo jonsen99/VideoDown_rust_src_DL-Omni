@@ -50,7 +50,6 @@
         showPlaylistModal = true;
       } else {
         showNewTaskModal = false;
-        // 【修改】主页手动解析时不携带 HTTP Headers，显式传入 undefined
         const tempId = taskStore.createTempTask(inputUrl, undefined);
         await taskStore.commitTask(tempId, inputUrl, info, undefined, undefined);
         inputUrl = '';
@@ -69,7 +68,6 @@
     const playlistItemsStr = itemsArray.join(',');
     
     showPlaylistModal = false;
-    // 【修改】合集提交时不携带 HTTP Headers，显式传入 undefined
     const tempId = taskStore.createTempTask(inputUrl, undefined);
     await taskStore.commitTask(tempId, inputUrl, parsedInfo, playlistItemsStr, undefined);
     
@@ -113,6 +111,17 @@
       taskStore.remove(taskId);
       await IPC.cancelTask(taskId);
     } catch (e) { console.error('删除任务失败:', e); }
+  }
+
+  // 【新增】辅助函数：解析任务绑定的 Headers JSON，判断是否为高权重的鉴权直链
+  function isAuthTask(headersStr?: string): boolean {
+    if (!headersStr) return false;
+    try {
+      const headers = JSON.parse(headersStr);
+      return Object.keys(headers).some(k => k.toLowerCase() === 'cookie');
+    } catch (e) {
+      return false;
+    }
   }
 </script>
 
@@ -159,11 +168,22 @@
                 <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
               </div>
             {/if}
+            
             {#if task.playlist_items}
               <div class="absolute bottom-1 right-1 bg-black/70 px-1 rounded text-[9px] font-mono border border-zinc-700/50">合集</div>
             {/if}
+            
             {#if task.http_headers}
-              <div class="absolute top-1 left-1 bg-emerald-500/80 px-1 rounded text-[9px] font-mono border border-emerald-400/50">嗅探</div>
+              {#if isAuthTask(task.http_headers)}
+                <div class="absolute top-1 left-1 bg-purple-500/80 px-1 rounded text-[9px] font-medium border border-purple-400/50 text-white shadow-sm flex items-center space-x-0.5">
+                  <svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
+                  <span>专属鉴权</span>
+                </div>
+              {:else}
+                <div class="absolute top-1 left-1 bg-emerald-500/80 px-1 rounded text-[9px] font-mono border border-emerald-400/50 text-white shadow-sm">
+                  防盗链
+                </div>
+              {/if}
             {/if}
           </div>
 
@@ -244,7 +264,7 @@
         </div>
       {/if}
       <div class="text-[11px] text-zinc-500">
-        💡 提示：使用对应浏览器 Cookie 解析可突破 B站 1080P 或高画质会员限制。若直接解析失败，请尝试左侧菜单栏的“嗅探”功能。
+        💡 提示：使用对应浏览器 Cookie 解析可突破 B站 1080P 或高画质会员限制。若直接解析失败或遭遇防盗链，请尝试左侧菜单栏的“嗅探”功能。
       </div>
     </div>
   </Modal>

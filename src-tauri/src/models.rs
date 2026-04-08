@@ -20,7 +20,9 @@ pub struct Task {
     pub status: TaskStatus,
     pub format_id: String,
     pub playlist_items: Option<String>, 
-    pub http_headers: Option<String>, // 【新增】保存嗅探到的专属请求头 (如 JSON 格式的 Referer/User-Agent)
+    // 【修改】保留此字段，用于接收和持久化嗅探器捕获的复杂 Headers (包含 Cookie、Referer 等)
+    // 使用 JSON 字符串存储以便于 SQLite 落盘
+    pub http_headers: Option<String>, 
     pub total_bytes: u64,
     pub downloaded_bytes: u64,
     pub speed: f64,
@@ -37,7 +39,7 @@ impl Task {
         thumbnail: Option<String>,
         format_id: String,
         playlist_items: Option<String>,
-        http_headers: Option<String>, // 【新增】支持传入动态 Header
+        http_headers: Option<String>, 
     ) -> Self {
         Self {
             id,
@@ -103,11 +105,12 @@ pub struct Config {
     pub include_metadata: bool,
 }
 
-// 【新增】专门用于接收前端嗅探器发送的复杂资源数据结构
+// 【修改】专门用于接收前端猫抓级嗅探器发送的复杂资源数据结构
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SniffedResource {
     pub url: String,
-    pub r#type: String,
+    pub r#type: String, // 资源类型 (video, audio, media)
     pub filename: String,
-    pub headers: Option<std::collections::HashMap<String, String>>, // 动态请求头集合
+    // 动态请求头集合，Tauri 接收后将其序列化为 JSON 字符串存入 Task 的 http_headers 中
+    pub headers: Option<std::collections::HashMap<String, String>>, 
 }

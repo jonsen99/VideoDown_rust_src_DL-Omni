@@ -1,6 +1,6 @@
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
-/// 初始化高级嗅探器逻辑 (基于 Tauri 2 Webview 与多层级脚本注入)
+/// 初始化高级嗅探器逻辑 (基于 Tauri 2 Webview 与猫抓级多层级脚本注入)
 pub async fn init_sniffer(url: String, app: AppHandle) -> Result<(), String> {
     let label = "sniffer_window";
 
@@ -8,10 +8,10 @@ pub async fn init_sniffer(url: String, app: AppHandle) -> Result<(), String> {
         let _ = win.close();
     }
 
-    // 核心拦截脚本：实现了 MIME 拦截与 JSON API 特征提取
+    // 核心拦截脚本：实现了 DOM 劫持、启发式正则、MIME 拦截与 JSON API 特征提取
     let init_script = r#"
         (function() {
-            console.log("[DL-Omni] 高级多层级嗅探脚本已注入，开始侦听...");
+            console.log("[DL-Omni] 猫抓级高级嗅探脚本已注入，开启底层多路侦听...");
             
             // 去重池，避免同一链接高频触发 IPC
             const emittedUrls = new Set();
@@ -21,7 +21,7 @@ pub async fn init_sniffer(url: String, app: AppHandle) -> Result<(), String> {
                 catch(e) { return url; }
             }
 
-            // 统一的消息发送函数 (自动附带网页的 Referer 和 User-Agent 以突破防盗链)
+            // 统一的消息发送函数 (自动附带网页的 Referer, User-Agent 以及极度关键的 Cookie)
             function tryEmit(url, type, source) {
                 if (!url || typeof url !== 'string' || !url.startsWith('http')) return;
                 
@@ -31,10 +31,11 @@ pub async fn init_sniffer(url: String, app: AppHandle) -> Result<(), String> {
 
                 console.log(`[DL-Omni] 捕获媒体流 (${source}):`, absUrl);
 
-                // 组装动态 Headers
+                // 组装动态 Headers，完整克隆当前网页的鉴权环境
                 const headers = {
                     "Referer": window.location.href,
-                    "User-Agent": navigator.userAgent
+                    "User-Agent": navigator.userAgent,
+                    "Cookie": document.cookie || "" // 突破网盘直链鉴权的核心
                 };
 
                 if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {
@@ -43,62 +44,135 @@ pub async fn init_sniffer(url: String, app: AppHandle) -> Result<(), String> {
                         payload: {
                             url: absUrl,
                             type: type,
-                            filename: `媒体资源 [${source}]`,
-                            headers: headers // 发送给后端持久化
+                            filename: `嗅探资源 [${source}]`,
+                            headers: headers
                         }
                     }).catch(err => console.error("[DL-Omni] IPC 失败:", err));
                 }
             }
 
-            // 检查响应类型或内容，判定是否为视频/音频
+            // ==========================================
+            // 阶段一：DOM 原型链劫持 (DOM Hook)
+            // 专门捕获那些不走网络 API，直接由 JS 赋值给原生标签的防盗链
+            // ==========================================
+            const originalVideoSrc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
+            if (originalVideoSrc) {
+                Object.defineProperty(HTMLMediaElement.prototype, 'src', {
+                    set: function(value) {
+                        tryEmit(value, 'video', 'DOM Hook (src)');
+                        return originalVideoSrc.set.call(this, value);
+                    },
+                    get: function() {
+                        return originalVideoSrc.get.call(this);
+                    }
+                });
+            }
+
+            const originalSetAttribute = Element.prototype.setAttribute;
+            Element.prototype.setAttribute = function(name, value) {
+                if (this instanceof HTMLMediaElement && name === 'src') {
+                    tryEmit(value, 'video', 'DOM Hook (setAttribute)');
+                }
+                return originalSetAttribute.apply(this, arguments);
+            };
+
+            // ==========================================
+            // 阶段二：启发式 URL 正则匹配 (Heuristic Regex)
+            // 应对跨域不透明响应(Opaque)导致的 Content-Type 丢失
+            // ==========================================
+            function heuristicMatch(url) {
+                const pikpakRegex = /dl-.*\.mypikpak\.com\/download\/.*fid=.*sign=/i;
+                const pikpakDomainRegex = /dl\.pikpak\.io\/.*\/signature\/.*\/ttl\//i;
+                const alipanRegex = /cn-.*\.aliyundrive\.net\/.*x-oss-signature=/i;
+                
+                if (pikpakRegex.test(url) || pikpakDomainRegex.test(url)) return 'PikPak API/直链';
+                if (alipanRegex.test(url)) return 'AliYunPan 直链';
+                
+                return null;
+            }
+
+            // ==========================================
+            // 阶段三：网络请求响应体解析 (MIME + JSON API)
+            // ==========================================
             async function inspectResponse(url, cloneRes, source) {
                 try {
-                    const contentType = cloneRes.headers.get('content-type') || '';
-                    
-                    // 【第一层】基于 MIME 类型精准拦截 (无视 URL 后缀)
-                    if (contentType.includes('video/') || contentType.includes('audio/') || 
-                        contentType.includes('mpegurl') || contentType.includes('dash+xml')) {
-                        tryEmit(url, contentType.split('/')[0] || 'media', `${source} MIME`);
+                    // 1. 优先执行启发式 URL 正则匹配
+                    const hMatch = heuristicMatch(url);
+                    if (hMatch) {
+                        tryEmit(url, 'video', `${source} - 启发式正则 (${hMatch})`);
                         return;
                     }
 
-                    // 【第二层】JSON API 特征提取 (针对抖音/B站等)
+                    const contentType = cloneRes.headers.get('content-type') || '';
+                    
+                    // 2. 基于 MIME 类型拦截 (加入对通用二进制流的放宽策略)
+                    if (contentType.includes('video/') || contentType.includes('audio/') || 
+                        contentType.includes('mpegurl') || contentType.includes('dash+xml') ||
+                        contentType.includes('application/octet-stream')) {
+                        
+                        // 对于 octet-stream，需要进一步约束防止抓到普通的系统文件
+                        if (contentType.includes('application/octet-stream')) {
+                            if (url.includes('fid=') || url.includes('sign=') || url.includes('token=')) {
+                                tryEmit(url, 'media (octet-stream)', `${source} MIME`);
+                            }
+                        } else {
+                            tryEmit(url, contentType.split('/')[0] || 'media', `${source} MIME`);
+                        }
+                        return;
+                    }
+
+                    // 3. JSON API 特征提取 (针对返回了真实直链的 JSON 报文)
                     if (contentType.includes('application/json')) {
                         const text = await cloneRes.text();
                         
-                        // 抖音特征: "url_list":["https://..."]
+                        // 抖音特征
                         const dyMatch = text.match(/"url_list"\s*:\s*\["([^"]+)"\]/);
                         if (dyMatch && dyMatch[1]) {
-                            // 修复 JSON 序列化中的 Unicode 转义字符
                             const cleanUrl = dyMatch[1].replace(/\\u0026/g, '&');
                             tryEmit(cleanUrl, 'video', `${source} - API解析 (Douyin)`);
                         }
                         
-                        // B站特征: "baseUrl":"https://..." 或 "url":"https://..." (需组合判断)
-                        // ... 此处可根据实际需求无限扩展特征正则表达式库
+                        // PikPak API 特征提取
+                        const ppMatch = text.match(/"web_content_link"\s*:\s*"([^"]+)"/);
+                        if (ppMatch && ppMatch[1]) {
+                            const cleanUrl = ppMatch[1].replace(/\\u0026/g, '&');
+                            tryEmit(cleanUrl, 'video', `${source} - API解析 (PikPak)`);
+                        }
                     }
                 } catch(e) {
                     // 忽略跨域或读取流报错
                 }
             }
 
-            // --- 拦截 Fetch ---
+            // ==========================================
+            // 阶段四：底层 Fetch & XHR 劫持
+            // ==========================================
             const originalFetch = window.fetch;
             window.fetch = async function(...args) {
                 const reqUrl = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
-                const response = await originalFetch.apply(this, args);
                 
-                // 必须 clone response 否则会破坏原网页的读取
+                // 预检：请求发出前先过一遍 URL 正则
+                const hMatch = heuristicMatch(reqUrl);
+                if (hMatch) {
+                    tryEmit(reqUrl, 'video', `Fetch Request - 启发式 (${hMatch})`);
+                }
+
+                const response = await originalFetch.apply(this, args);
+                // clone response 防破坏原网页读取
                 inspectResponse(reqUrl, response.clone(), 'Fetch');
                 return response;
             };
 
-            // --- 拦截 XMLHttpRequest ---
             const originalXhrOpen = XMLHttpRequest.prototype.open;
             const originalXhrSend = XMLHttpRequest.prototype.send;
             
             XMLHttpRequest.prototype.open = function(method, url, ...rest) {
                 this._reqUrl = url;
+                // 预检
+                const hMatch = heuristicMatch(url);
+                if (hMatch) {
+                    tryEmit(url, 'video', `XHR Request - 启发式 (${hMatch})`);
+                }
                 return originalXhrOpen.call(this, method, url, ...rest);
             };
             
@@ -106,13 +180,10 @@ pub async fn init_sniffer(url: String, app: AppHandle) -> Result<(), String> {
                 this.addEventListener('load', function() {
                     try {
                         const contentType = this.getResponseHeader('content-type') || '';
-                        
-                        // 构造一个伪 Response 对象复用逻辑
                         const fakeRes = {
                             headers: new Headers({ 'content-type': contentType }),
                             text: async () => this.responseText
                         };
-                        
                         inspectResponse(this._reqUrl, fakeRes, 'XHR');
                     } catch(e) {}
                 });
@@ -123,7 +194,7 @@ pub async fn init_sniffer(url: String, app: AppHandle) -> Result<(), String> {
     "#;
 
     WebviewWindowBuilder::new(&app, label, WebviewUrl::External(url.parse().unwrap()))
-        .title("DL-Omni - 资源嗅探器 (多层级引擎)")
+        .title("DL-Omni - 资源嗅探器 (猫抓级多路引擎)")
         .inner_size(1100.0, 800.0)
         .initialization_script(init_script)
         .build()

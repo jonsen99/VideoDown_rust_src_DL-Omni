@@ -75,7 +75,6 @@ pub async fn parse_media_info(url: &str, app: AppHandle, state: AppState) -> Res
     })
 }
 
-// 辅助函数保持原样
 fn parse_size_to_bytes(val: f64, unit: &str) -> u64 {
     let multiplier = if unit.contains("GiB") || unit.contains("G") { 1024.0 * 1024.0 * 1024.0 }
     else if unit.contains("MiB") || unit.contains("M") { 1024.0 * 1024.0 }
@@ -97,7 +96,7 @@ fn parse_eta(eta_str: &str) -> u64 {
     seconds
 }
 
-/// 核心下载逻辑
+/// 核心下载逻辑 (处理被降级或 M3U8 流媒体)
 pub async fn download_via_ytdlp(app: AppHandle, state: AppState, task: &Task) -> Result<u64, String> {
     let ytdlp_path = utils::get_ytdlp_path(&app)?;
 
@@ -134,14 +133,14 @@ pub async fn download_via_ytdlp(app: AppHandle, state: AppState, task: &Task) ->
         }
     }
 
-    // --- 新特性 1: 挂载浏览器 Cookie ---
+    // --- 全局浏览器 Cookie 挂载 (系统设置项) ---
     if let Some(cookie) = browser_cookie {
         if cookie != "none" && !cookie.is_empty() {
             cmd.arg("--cookies-from-browser").arg(cookie);
         }
     }
 
-    // --- 新特性 2: 下载范围 (合集) ---
+    // --- 下载范围 (合集) ---
     if let Some(ref items) = task.playlist_items {
         if !items.is_empty() {
             cmd.arg("--yes-playlist");
@@ -153,27 +152,27 @@ pub async fn download_via_ytdlp(app: AppHandle, state: AppState, task: &Task) ->
         cmd.arg("--no-playlist");
     }
 
-    // --- 新特性 3: 元数据目录模式 ---
+    // --- 元数据目录模式 ---
     if include_metadata {
-        // 创建以视频标题命名的子文件夹
         cmd.arg("-o").arg(format!("{}/%(title)s/%(title)s.%(ext)s", save_dir));
-        // 抓取辅助信息
         cmd.arg("--write-thumbnail")
             .arg("--write-info-json")
             .arg("--write-description")
             .arg("--write-subs").arg("--write-auto-subs")
-            // 将部分基础属性内嵌进视频文件
             .arg("--embed-metadata")
             .arg("--embed-thumbnail");
     } else {
         cmd.arg("-P").arg(save_dir);
     }
 
-    // --- 【修改】新特性 4: 挂载嗅探器捕获的防盗链 Headers ---
+    // --- 【修改】完美挂载嗅探器捕获的防盗链 Headers (包含特定的单次 Cookie) ---
+    // 如果嗅探到了 M3U8 流，且带有防盗链 Cookie 和 Referer，这里会通过 --add-header 逐一喂给 yt-dlp
     if let Some(ref headers_json) = task.http_headers {
         if let Ok(parsed_headers) = serde_json::from_str::<std::collections::HashMap<String, String>>(headers_json) {
             for (key, value) in parsed_headers {
-                cmd.arg("--add-header").arg(format!("{}: {}", key, value));
+                // 清洗非法换行符，防止 yt-dlp 参数解析崩溃
+                let clean_value = value.replace('\n', "").replace('\r', "");
+                cmd.arg("--add-header").arg(format!("{}: {}", key, clean_value));
             }
         }
     }
@@ -266,11 +265,8 @@ pub async fn download_via_ytdlp(app: AppHandle, state: AppState, task: &Task) ->
 
     let status = child.wait().await.map_err(|e| e.to_string())?;
 
-    // 在子进程结束后判断是否异常退出。
-    // 为了容错，有些平台报错但文件依然有效，这里做个简单拦截。
     if !status.success() {
-        // 尝试抓取 stderr 以抛出详细异常信息
-        return Err("Download process exited with error or database locked.".into());
+        return Err("Download process exited with error or database locked. Check headers or stream validity.".into());
     }
 
     if let Some(path) = final_path {

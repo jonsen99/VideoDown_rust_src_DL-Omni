@@ -34,12 +34,14 @@ pub async fn get_direct_link_info(url: &str) -> Result<MediaInfo, String> {
 
 /// 针对直链或分片流的原生多线程下载引擎
 pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> Result<u64, String> {
-    // 1. 解析任务自带的动态 HTTP Headers (由嗅探器捕获的防盗链信息)
+    // 1. 解析任务自带的动态 HTTP Headers (由嗅探器捕获的防盗链与 Cookie 信息)
     let mut headers = HeaderMap::new();
     if let Some(headers_json) = &task.http_headers {
         if let Ok(parsed_headers) = serde_json::from_str::<std::collections::HashMap<String, String>>(headers_json) {
             for (k, v) in parsed_headers {
-                if let (Ok(name), Ok(value)) = (HeaderName::from_str(&k), HeaderValue::from_str(&v)) {
+                // 清理可能导致解析失败的非法空白字符（尤其针对超长且未格式化的 Cookie）
+                let clean_v = v.replace('\n', "").replace('\r', "");
+                if let (Ok(name), Ok(value)) = (HeaderName::from_str(&k), HeaderValue::from_str(&clean_v)) {
                     headers.insert(name, value);
                 }
             }
@@ -49,17 +51,19 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
     // 2. 注入 Headers 构建 Client
     let client = Client::builder()
         .user_agent(DEFAULT_USER_AGENT)
-        .default_headers(headers) // 应用动态请求头
+        .default_headers(headers) // 完美挂载包含 Cookie 在内的动态请求头
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())?;
 
     let mut total_size = 0;
 
+    // 先尝试 HEAD 探测总大小
     if let Ok(res) = client.head(&task.url).send().await {
         total_size = res.content_length().unwrap_or(0);
     }
 
+    // 如果 HEAD 失败，尝试 0-0 Range 探测
     if total_size == 0 {
         if let Ok(res) = client.get(&task.url).header("Range", "bytes=0-0").send().await {
             if let Some(cr) = res.headers().get(reqwest::header::CONTENT_RANGE) {
@@ -91,13 +95,13 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
 
     std::fs::create_dir_all(&save_dir).map_err(|e| e.to_string())?;
 
-    let filename = if task.title.is_empty() || task.title == "unknown_file" {
+    let filename = if task.title.is_empty() || task.title == "unknown_file" || task.title.starts_with("嗅探资源") {
         utils::extract_filename_from_url(&task.url)
     } else {
         task.title.clone()
     };
     
-    // 确保文件名带有正确后缀，对于动态直链非常重要
+    // 确保文件名带有正确后缀，防备无后缀的 API 直链落盘
     let final_filename = if !filename.contains('.') { format!("{}.mp4", filename) } else { filename };
     let file_path = std::path::Path::new(&save_dir).join(&final_filename);
 
