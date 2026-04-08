@@ -12,7 +12,7 @@ impl Db {
     pub fn init(app: &AppHandle) -> Result<Self, rusqlite::Error> {
         let app_dir = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("./"));
         std::fs::create_dir_all(&app_dir).ok();
-        
+
         let db_path = app_dir.join("tasks.db");
         let conn = Connection::open(db_path)?;
 
@@ -20,7 +20,7 @@ impl Db {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
 
-        // 初始化表结构
+        // 初始化表结构 (新增 playlist_items)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
@@ -34,10 +34,14 @@ impl Db {
                 speed REAL DEFAULT 0.0,
                 eta INTEGER DEFAULT 0,
                 created_at INTEGER NOT NULL,
-                error_msg TEXT
+                error_msg TEXT,
+                playlist_items TEXT
             )",
             [],
         )?;
+
+        // 针对已存在的旧版数据库，尝试追加 playlist_items 字段 (平滑迁移)
+        let _ = conn.execute("ALTER TABLE tasks ADD COLUMN playlist_items TEXT", []);
 
         let mut db = Self { conn };
         db.recover_orphan_tasks()?; // 处理异常退出导致的僵尸任务
@@ -48,11 +52,11 @@ impl Db {
     pub fn insert_task(&self, task: &Task) -> SqlResult<()> {
         let status_str = serde_json::to_string(&task.status).unwrap_or_default().replace("\"", "");
         self.conn.execute(
-            "INSERT INTO tasks (id, url, title, thumbnail, status, format_id, total_bytes, downloaded_bytes, speed, eta, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO tasks (id, url, title, thumbnail, status, format_id, total_bytes, downloaded_bytes, speed, eta, created_at, error_msg, playlist_items)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 task.id, task.url, task.title, task.thumbnail, status_str, task.format_id,
-                task.total_bytes, task.downloaded_bytes, task.speed, task.eta, task.created_at
+                task.total_bytes, task.downloaded_bytes, task.speed, task.eta, task.created_at, task.error_msg, task.playlist_items
             ],
         )?;
         Ok(())
@@ -74,11 +78,11 @@ impl Db {
 
     /// 获取所有任务
     pub fn get_all_tasks(&self) -> SqlResult<Vec<Task>> {
-        let mut stmt = self.conn.prepare("SELECT * FROM tasks ORDER BY created_at DESC")?;
+        let mut stmt = self.conn.prepare("SELECT id, url, title, thumbnail, status, format_id, total_bytes, downloaded_bytes, speed, eta, created_at, error_msg, playlist_items FROM tasks ORDER BY created_at DESC")?;
         let task_iter = stmt.query_map([], |row| {
             let status_str: String = row.get(4)?;
             let status: TaskStatus = serde_json::from_str(&format!("\"{}\"", status_str)).unwrap_or(TaskStatus::Error);
-            
+
             Ok(Task {
                 id: row.get(0)?,
                 url: row.get(1)?,
@@ -92,6 +96,7 @@ impl Db {
                 eta: row.get(9)?,
                 created_at: row.get(10)?,
                 error_msg: row.get(11)?,
+                playlist_items: row.get(12)?,
             })
         })?;
 
@@ -104,13 +109,13 @@ impl Db {
 
     /// 获取单条任务详情
     pub fn get_task(&self, id: &str) -> SqlResult<Option<Task>> {
-        let mut stmt = self.conn.prepare("SELECT * FROM tasks WHERE id = ?1")?;
+        let mut stmt = self.conn.prepare("SELECT id, url, title, thumbnail, status, format_id, total_bytes, downloaded_bytes, speed, eta, created_at, error_msg, playlist_items FROM tasks WHERE id = ?1")?;
         let mut rows = stmt.query(params![id])?;
 
         if let Some(row) = rows.next()? {
             let status_str: String = row.get(4)?;
             let status: TaskStatus = serde_json::from_str(&format!("\"{}\"", status_str)).unwrap_or(TaskStatus::Error);
-            
+
             Ok(Some(Task {
                 id: row.get(0)?,
                 url: row.get(1)?,
@@ -124,6 +129,7 @@ impl Db {
                 eta: row.get(9)?,
                 created_at: row.get(10)?,
                 error_msg: row.get(11)?,
+                playlist_items: row.get(12)?,
             }))
         } else {
             Ok(None)

@@ -19,6 +19,7 @@ export interface Task {
   thumbnail?: string;        // 缩略图路径 (本地缓存或 URL)
   status: TaskStatus;        // 当前状态
   format_id: string;         // 用户选择的 yt-dlp format_id
+  playlist_items?: string;   // 【新增】合集下载范围 (如 "1,3,5-7")
   total_bytes: number;       // 文件总大小 (字节)
   downloaded_bytes: number;  // 已下载大小 (字节)
   speed: number;             // 当前下载速度 (Bytes/s)
@@ -40,6 +41,8 @@ export interface Config {
   split_audio_video: boolean;  // 是否分开下载音频与视频（各保存为独立文件）
   video_quality: string;       // 视频画质偏好: 'best' | '1080p' | '720p' | '480p' | '360p'
   audio_quality: string;       // 音频音质偏好: 'best' | '128k' | '64k'
+  browser_cookie: string;      // 【新增】使用的浏览器 Cookie，"none" 为不使用
+  include_metadata: boolean;   // 【新增】是否包含元数据并使用独立文件夹模式
 }
 
 /**
@@ -56,6 +59,17 @@ export interface MediaFormat {
 }
 
 /**
+ * 【新增】合集子项简要信息
+ */
+export interface PlaylistItem {
+  playlist_index?: number;
+  title: string;
+  duration?: number;
+  url?: string;
+  id?: string;
+}
+
+/**
  * yt-dlp -J 解析返回的媒体元数据
  */
 export interface MediaInfo {
@@ -64,4 +78,5 @@ export interface MediaInfo {
   duration: number;
   thumbnail: string;
   formats: MediaFormat[];
+  playlist_entries?: PlaylistItem[]; // 【新增】如果是合集则包含此列表
 }

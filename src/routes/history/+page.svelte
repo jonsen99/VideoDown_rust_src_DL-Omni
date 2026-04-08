@@ -53,7 +53,7 @@
             </div>
             <div class="min-w-0">
               <h4 class="text-sm font-medium text-zinc-200 truncate">{task.title}</h4>
-              <p class="text-xs text-zinc-500 mt-1">{(task.total_bytes / 1024 / 1024).toFixed(1)} MB • {new Date(task.created_at).toLocaleDateString()}</p>
+              <p class="text-xs text-zinc-500 mt-1">{new Date(task.created_at).toLocaleString()}</p>
             </div>
           </div>
           <div class="flex items-center space-x-3 shrink-0 ml-4">

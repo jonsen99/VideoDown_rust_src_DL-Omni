@@ -9,9 +9,11 @@ class ConfigStore {
     max_threads_per_task: 16,
     proxy_url: '',
     theme: 'system',
-    split_audio_video: false, // 默认合并下载（音视频合为一个文件）
-    video_quality: 'best',    // 默认最高画质
-    audio_quality: 'best',    // 默认最高音质
+    split_audio_video: false, 
+    video_quality: 'best',    
+    audio_quality: 'best',    
+    browser_cookie: 'none',    // 【新增】默认不使用浏览器 Cookie
+    include_metadata: false,   // 【新增】默认不开启独立文件夹与元数据
   });
 
   /**

@@ -3,27 +3,40 @@ use crate::state::AppState;
 use crate::models::{MediaInfo, Task, Config};
 use crate::engine;
 
-// --- 原有下载相关 Command ---
-
 #[command]
-pub async fn parse_url(url: String, app: AppHandle) -> Result<MediaInfo, String> {
-    engine::ytdlp::parse_media_info(&url, app)
+pub async fn parse_url(
+    url: String,
+    app: AppHandle,
+    state: State<'_, AppState> // 新增：引入状态管理，为了读取全局配置中的 Cookie
+) -> Result<MediaInfo, String> {
+    // 将 state.inner().clone() 传入引擎层
+    engine::ytdlp::parse_media_info(&url, app, state.inner().clone())
         .await
         .map_err(|e| format!("解析失败: {}", e))
 }
 
 #[command]
 pub async fn create_task(
-    url: String, 
+    url: String,
     title: String,
     thumbnail: Option<String>,
-    format_id: String, 
-    app: AppHandle, 
+    format_id: String,
+    playlist_items: Option<String>, // 新增：接收前端传来的合集勾选范围
+    app: AppHandle,
     state: State<'_, AppState>
 ) -> Result<String, String> {
     let task_id = uuid::Uuid::new_v4().to_string();
-    let new_task = Task::new(task_id.clone(), url.clone(), title, thumbnail, format_id.clone());
-    
+
+    // 透传 playlist_items 到 Task 模型
+    let new_task = Task::new(
+        task_id.clone(),
+        url.clone(),
+        title,
+        thumbnail,
+        format_id.clone(),
+        playlist_items
+    );
+
     {
         let db = state.db.lock().await;
         db.insert_task(&new_task).map_err(|e| e.to_string())?;
@@ -33,16 +46,17 @@ pub async fn create_task(
     Ok(task_id)
 }
 
+// ... 下方保留原有的 pause_task, resume_task, get_all_tasks 等其他指令保持不变 ...
 #[command]
 pub async fn pause_task(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut active_tasks = state.active_tasks.lock().await;
     if let Some(handle) = active_tasks.remove(&task_id) {
         handle.abort();
     }
-    
+
     let db = state.db.lock().await;
     db.update_status(&task_id, crate::models::TaskStatus::Paused).map_err(|e| e.to_string())?;
-    
+
     Ok(())
 }
 
@@ -92,12 +106,11 @@ pub async fn open_folder(state: State<'_, AppState>) -> Result<(), String> {
     let output_dir = &config.settings.default_download_path;
 
     if std::path::Path::new(output_dir).exists() {
-        std::process::Command::new("explorer") 
+        std::process::Command::new("explorer")
             .arg(output_dir)
             .spawn()
             .map_err(|e| e.to_string())?;
     }
-    
     Ok(())
 }
 
@@ -119,18 +132,12 @@ pub async fn get_config(state: State<'_, AppState>) -> Result<Config, String> {
     Ok(config.settings.clone())
 }
 
-// --- 更新：嗅探业务指令层 ---
-
 #[command]
 pub async fn start_sniffing(url: String, app: AppHandle) -> Result<(), String> {
-    engine::sniffer::init_sniffer(url, app)
-        .await
-        .map_err(|e| format!("启动嗅探器失败: {}", e))
+    engine::sniffer::init_sniffer(url, app).await.map_err(|e| format!("启动嗅探器失败: {}", e))
 }
 
 #[command]
 pub async fn stop_sniffing(app: AppHandle) -> Result<(), String> {
-    engine::sniffer::stop_sniffer(app)
-        .await
-        .map_err(|e| format!("停止嗅探器失败: {}", e))
+    engine::sniffer::stop_sniffer(app).await.map_err(|e| format!("停止嗅探器失败: {}", e))
 }

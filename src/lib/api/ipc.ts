@@ -8,8 +8,20 @@ export const IPC = {
     return await invoke<MediaInfo>('parse_url', { url });
   },
 
-  async createTask(url: string, title: string, thumbnail: string | undefined, formatId: string): Promise<string> {
-    return await invoke<string>('create_task', { url, title, thumbnail, formatId });
+  async createTask(
+    url: string, 
+    title: string, 
+    thumbnail: string | undefined, 
+    formatId: string,
+    playlistItems?: string // 【新增】合集选择范围透传
+  ): Promise<string> {
+    return await invoke<string>('create_task', { 
+      url, 
+      title, 
+      thumbnail, 
+      formatId, 
+      playlistItems 
+    });
   },
 
   async pauseTask(taskId: string): Promise<void> {
@@ -36,8 +48,6 @@ export const IPC = {
     await invoke('open_folder');
   },
 
-  // --- 更新：嗅探业务指令层 ---
-
   async startSniffing(url: string): Promise<void> {
     await invoke('start_sniffing', { url });
   },
@@ -45,8 +55,6 @@ export const IPC = {
   async stopSniffing(): Promise<void> {
     await invoke('stop_sniffing');
   },
-
-  // --- 事件监听层 ---
 
   async listenProgressUpdates(): Promise<UnlistenFn> {
     return await listen<Partial<Task>[]>('batch_progress_update', (event) => {
