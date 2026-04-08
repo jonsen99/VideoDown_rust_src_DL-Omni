@@ -10,8 +10,8 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 /01.md
 /02细节.md
+/02合并文件.py
 /03项目代码生成文件.py
-/04合并文件.py
 /.idea/.gitignore
 /.idea/dl-omni.iml
 /.idea/modules.xml

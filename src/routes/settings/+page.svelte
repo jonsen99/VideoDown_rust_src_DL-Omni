@@ -28,8 +28,8 @@
   }
 </script>
 
-<div class="h-full overflow-y-auto p-8 max-w-3xl mx-auto space-y-10">
-  <h2 class="text-2xl font-medium text-zinc-100 tracking-wide">全局设置</h2>
+<div class="h-full overflow-y-auto p-6 space-y-6">
+  <h2 class="text-lg font-medium text-zinc-100 tracking-wide">全局设置</h2>
 
   <section class="space-y-4">
     <h3 class="text-xs font-bold text-zinc-500 uppercase tracking-wider">基础存储</h3>
