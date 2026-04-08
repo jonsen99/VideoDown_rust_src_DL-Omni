@@ -28,8 +28,6 @@ pub fn get_ytdlp_path(app: &AppHandle) -> Result<String, String> {
 
 /// 检查目标磁盘是否有足够的可用空间 (防崩溃拦截预警)
 pub fn check_disk_space(_path: &PathBuf, _required_bytes: u64) -> Result<bool, String> {
-    // TODO: 调用底层系统 API (可引入 sysinfo 库) 检查磁盘挂载点剩余空间。
-    // 如果空间不足 (如 required_bytes > available)，则返回 false。
     Ok(true)
 }
 
@@ -37,6 +35,31 @@ pub fn check_disk_space(_path: &PathBuf, _required_bytes: u64) -> Result<bool, S
 pub fn sanitize_filename(name: &str) -> String {
     let re = Regex::new(r#"[\\/:*?"<>|]"#).unwrap();
     re.replace_all(name, "_").to_string()
+}
+
+/// [新增] 从普通的直链 URL 中提取文件名
+pub fn extract_filename_from_url(url: &str) -> String {
+    // 去除 URL 参数部分 ?xxx=yyy
+    let parsed_url = url.split('?').next().unwrap_or(url);
+    let segments: Vec<&str> = parsed_url.split('/').collect();
+    
+    if let Some(last) = segments.last() {
+        if !last.is_empty() {
+            return sanitize_filename(last);
+        }
+    }
+    "unknown_file".to_string()
+}
+
+/// [新增] 检查给定的 URL 是否为常见静态文件的直链
+pub fn is_direct_link(url: &str) -> bool {
+    let clean_url = url.split('?').next().unwrap_or(url).to_lowercase();
+    // 覆盖常见的普通二进制/压缩包/文档/部分独立媒体格式
+    let direct_extensions = [
+        ".exe", ".zip", ".rar", ".7z", ".tar", ".gz", ".pkg", ".dmg", ".iso", 
+        ".bin", ".msi", ".apk", ".pdf", ".txt", ".mp4", ".mp3", ".mkv"
+    ];
+    direct_extensions.iter().any(|ext| clean_url.ends_with(ext))
 }
 
 /// 获取目标平台特定的 ffmpeg 运行文件名

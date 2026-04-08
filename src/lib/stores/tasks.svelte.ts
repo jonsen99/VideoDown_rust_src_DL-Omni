@@ -51,11 +51,8 @@ class TaskStore {
     delete this.tasks[id];
   }
 
-  // --- 【重构】支持合集交互的新版任务流 ---
+  // --- 支持直链与合集交互的新版任务流 ---
 
-  /**
-   * 1. 占位：在 UI 列表创建一条“解析中”的临时任务
-   */
   createTempTask(url: string): string {
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     this.add({
@@ -75,34 +72,34 @@ class TaskStore {
     return tempId;
   }
 
-  /**
-   * 2. 确认创建：由 UI 调用 (用户可能已在合集弹窗中勾选了子集)
-   */
   async commitTask(tempId: string, url: string, info: MediaInfo, playlistItems?: string) {
     try {
-      if (!this.tasks[tempId]) return; // 若临时任务被用户手快删了，则中断
+      if (!this.tasks[tempId]) return;
       
       const { split_audio_video, video_quality, audio_quality } = configStore.settings;
 
-      const videoFilter = video_quality === 'best'
-        ? 'bv*'
-        : `bv[height<=${video_quality.replace('p', '')}]`;
+      let formatId = 'direct'; // [修改] 默认为直链设置占位符
 
-      const audioFilter = audio_quality === 'best'
-        ? 'ba'
-        : `ba[abr<=${audio_quality.replace('k', '')}]`;
+      // [修改] 如果标识不是 direct_link，说明需要交给 yt-dlp，才组装相关画质参数
+      if (info.id !== 'direct_link') {
+        const videoFilter = video_quality === 'best'
+          ? 'bv*'
+          : `bv[height<=${video_quality.replace('p', '')}]`;
 
-      const formatId = split_audio_video
-        ? `${videoFilter}/${audioFilter}`
-        : `${videoFilter}+${audioFilter}/b`;
+        const audioFilter = audio_quality === 'best'
+          ? 'ba'
+          : `ba[abr<=${audio_quality.replace('k', '')}]`;
+
+        formatId = split_audio_video
+          ? `${videoFilter}/${audioFilter}`
+          : `${videoFilter}+${audioFilter}/b`;
+      }
       
       const title = info.title || "未知标题";
       const thumbnail: string | undefined = info.thumbnail || undefined;
       
-      // IPC 创建正式任务，附带合集参数
       const taskId = await IPC.createTask(url, title, thumbnail, formatId, playlistItems);
       
-      // 替换临时任务
       if (this.tasks[tempId]) {
         this.remove(tempId);
         this.add({
@@ -133,9 +130,6 @@ class TaskStore {
     }
   }
 
-  /**
-   * 提供给外部系统的简单快捷入口 (比如嗅探器直接发起单视频下载)
-   */
   async submitNewTask(url: string) {
     const tempId = this.createTempTask(url);
     try {

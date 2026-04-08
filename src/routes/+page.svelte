@@ -75,7 +75,6 @@
     
     const itemsArray = Array.from(selectedItems).sort((a, b) => a - b);
     
-    // 将数组 [1, 2, 4, 5] 简化为 yt-dlp 支持的连续字符串 (略: 这里直接使用逗号分隔即可，如 "1,2,4,5")
     const playlistItemsStr = itemsArray.join(',');
     
     showPlaylistModal = false;
@@ -102,7 +101,6 @@
     } else {
       selectedItems.add(index);
     }
-    // 强制触发 Svelte 5 响应式更新 (Set 突变需要重新赋值)
     selectedItems = new Set(selectedItems);
   }
 
@@ -190,6 +188,8 @@
             {#if task.status !== 'completed'}
               <button
                 class="w-8 h-8 flex items-center justify-center rounded-full bg-zinc-700/50 hover:bg-zinc-600 text-zinc-300"
+                aria-label="暂停或恢复任务"
+                title="暂停 / 恢复"
                 onclick={() => handleToggleTask(task.id, task.status)}
               >
                 {#if task.status === 'paused' || task.status === 'error'}
@@ -201,6 +201,8 @@
             {/if}
             <button
               class="w-8 h-8 flex items-center justify-center rounded-full bg-zinc-700/50 hover:bg-red-500/80 text-zinc-300 hover:text-white"
+              aria-label="删除任务"
+              title="删除任务"
               onclick={() => handleDeleteTask(task.id)}
             >
               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -211,11 +213,9 @@
     {/if}
   </div>
 
-  <!-- 模态框 1：新建任务（带 Cookie 选择） -->
   <Modal show={showNewTaskModal} title="新建下载任务" onclose={() => showNewTaskModal = false}>
     <div class="space-y-4">
       <div class="flex space-x-2">
-        <!-- 浏览器 Cookie 下拉框 -->
         <select 
           class="shrink-0 bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-3 text-xs text-zinc-300 outline-none focus:border-accent-blue"
           bind:value={configStore.settings.browser_cookie}
@@ -255,7 +255,6 @@
     </div>
   </Modal>
 
-  <!-- 模态框 2：合集列表项选择 -->
   <Modal show={showPlaylistModal} title="合集下载选择" onclose={() => showPlaylistModal = false}>
     <div class="space-y-4 flex flex-col h-[50vh]">
       <div class="flex justify-between items-end shrink-0">

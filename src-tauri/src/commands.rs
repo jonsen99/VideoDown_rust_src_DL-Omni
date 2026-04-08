@@ -7,9 +7,14 @@ use crate::engine;
 pub async fn parse_url(
     url: String,
     app: AppHandle,
-    state: State<'_, AppState> // 新增：引入状态管理，为了读取全局配置中的 Cookie
+    state: State<'_, AppState>
 ) -> Result<MediaInfo, String> {
-    // 将 state.inner().clone() 传入引擎层
+    // [修改] 解析前先判断是否为直链
+    if crate::utils::is_direct_link(&url) {
+        return engine::downloader::get_direct_link_info(&url).await;
+    }
+
+    // 非直链则走 yt-dlp 解析
     engine::ytdlp::parse_media_info(&url, app, state.inner().clone())
         .await
         .map_err(|e| format!("解析失败: {}", e))
@@ -21,13 +26,12 @@ pub async fn create_task(
     title: String,
     thumbnail: Option<String>,
     format_id: String,
-    playlist_items: Option<String>, // 新增：接收前端传来的合集勾选范围
+    playlist_items: Option<String>, 
     app: AppHandle,
     state: State<'_, AppState>
 ) -> Result<String, String> {
     let task_id = uuid::Uuid::new_v4().to_string();
 
-    // 透传 playlist_items 到 Task 模型
     let new_task = Task::new(
         task_id.clone(),
         url.clone(),
@@ -46,7 +50,6 @@ pub async fn create_task(
     Ok(task_id)
 }
 
-// ... 下方保留原有的 pause_task, resume_task, get_all_tasks 等其他指令保持不变 ...
 #[command]
 pub async fn pause_task(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut active_tasks = state.active_tasks.lock().await;
