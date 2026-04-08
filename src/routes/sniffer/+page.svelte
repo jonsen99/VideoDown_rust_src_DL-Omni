@@ -12,6 +12,28 @@
   let isSniffing = $state(false);
   let unlisten: UnlistenFn | null = null;
 
+  // 快捷导航数据
+  const shortcuts = [
+    {
+      title: '音乐检索',
+      url: 'https://music.gdstudio.xyz/',
+      desc: 'music.gdstudio.xyz',
+      icon: 'M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3'
+    },
+    {
+      title: '视频搜索',
+      url: 'https://www.iyf.lv/',
+      desc: 'www.iyf.lv',
+      icon: 'M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z'
+    },
+    {
+      title: '网盘搜索',
+      url: 'https://cse.google.com/cse?cx=e7dbb37893b8e4dbf',
+      desc: 'Google CSE 聚合',
+      icon: 'M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z'
+    }
+  ];
+
   onMount(async () => {
     unlisten = await IPC.listenSniffedResources((resource: SniffedResource) => {
       // 避免重复链接
@@ -30,11 +52,11 @@
 
   async function start() {
     if (!url) return;
-    
+
     isSniffing = true;
-    capturedResources = []; 
+    capturedResources = [];
     showDrawer = false;
-    
+
     try {
       await IPC.startSniffing(url);
     } catch (e) {
@@ -54,20 +76,26 @@
 
   function handleDownload(resource: SniffedResource) {
     console.log("准备下载:", resource);
-    showDrawer = false; 
-    
-    // 【修改】直接调用专门为嗅探准备的提交通道，不再绕路去解析
-    taskStore.submitSniffedTask(resource); 
-    
+    showDrawer = false;
+
+    // 提交嗅探任务
+    taskStore.submitSniffedTask(resource);
+
     goto('/'); // 路由跳转回主页任务列表
+  }
+
+  // 快捷导航点击处理
+  function handleShortcutClick(targetUrl: string) {
+    url = targetUrl;
+    start();
   }
 </script>
 
 <div class="h-full flex flex-col relative bg-zinc-950">
   <header class="shrink-0 p-3 flex items-center space-x-2 border-b border-zinc-800/50 bg-zinc-900">
     <div class="flex-1 relative">
-      <input 
-        type="text" 
+      <input
+        type="text"
         bind:value={url}
         placeholder="输入流媒体网页地址 (回车开始嗅探)"
         class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-sm text-zinc-200 outline-none focus:border-accent-blue transition-colors"
@@ -75,14 +103,14 @@
       />
     </div>
     {#if isSniffing}
-      <button 
+      <button
         class="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 text-sm font-medium rounded-lg transition-colors"
         onclick={stop}
       >
         停止侦听
       </button>
     {:else}
-      <button 
+      <button
         class="px-4 py-2 bg-accent-blue hover:bg-blue-600 text-white text-sm font-medium rounded-lg transition-colors"
         onclick={start}
       >
@@ -91,11 +119,38 @@
     {/if}
   </header>
 
-  <div class="flex-1 relative flex flex-col items-center justify-center p-6">
+  <div class="flex-1 relative flex flex-col items-center justify-center p-6 overflow-y-auto">
     {#if !isSniffing}
-      <svg class="w-16 h-16 text-zinc-700 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-      <h3 class="text-lg font-medium text-zinc-300 mb-2">等待输入网页</h3>
-      <p class="text-sm text-zinc-500 text-center max-w-sm">采用多层级引擎。将在独立的不可见/可见窗口中渲染网页，并深度拦截底层网络 API，突破常规防盗链。</p>
+      <div class="flex flex-col items-center justify-center mt-[-10vh]">
+        <svg class="w-16 h-16 text-zinc-700 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        <h3 class="text-lg font-medium text-zinc-300 mb-2">等待输入网页</h3>
+        <p class="text-sm text-zinc-500 text-center max-w-sm mb-12">采用多层级引擎。将在独立的不可见/可见窗口中渲染网页，并深度拦截底层网络 API，突破常规防盗链。</p>
+
+        <div class="w-full max-w-2xl px-4">
+          <div class="flex items-center justify-center mb-6 space-x-3">
+            <div class="h-px w-12 bg-zinc-800"></div>
+            <h4 class="text-xs font-bold text-zinc-500 uppercase tracking-widest">常用检索站点</h4>
+            <div class="h-px w-12 bg-zinc-800"></div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {#each shortcuts as item}
+              <button
+                class="group flex flex-col items-center p-5 bg-zinc-800/20 border border-zinc-800 rounded-xl hover:bg-zinc-800/50 hover:border-zinc-600 hover:-translate-y-0.5 transition-all duration-200"
+                onclick={() => handleShortcutClick(item.url)}
+              >
+                <div class="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center mb-3 group-hover:bg-accent-blue/10 transition-colors">
+                  <svg class="w-6 h-6 text-zinc-400 group-hover:text-accent-blue transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d={item.icon} />
+                  </svg>
+                </div>
+                <span class="text-sm font-medium text-zinc-200">{item.title}</span>
+                <span class="text-[10px] text-zinc-500 mt-1 truncate w-full text-center font-mono opacity-70">{item.desc}</span>
+              </button>
+            {/each}
+          </div>
+        </div>
+      </div>
     {:else}
       <div class="relative w-24 h-24 mb-6 flex items-center justify-center">
         <div class="absolute inset-0 border-4 border-zinc-800 rounded-full"></div>
@@ -107,8 +162,8 @@
     {/if}
   </div>
 
-  <button 
-    class="absolute right-8 bottom-8 w-14 h-14 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-full shadow-xl flex items-center justify-center transition-transform hover:scale-105 group z-50"
+  <button
+    class="absolute right-8 bottom-8 w-14 h-14 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-full shadow-xl flex items-center justify-center transition-transform hover:scale-105 group z-40"
     aria-label="查看捕获的资源"
     title="查看捕获的资源"
     onclick={() => showDrawer = !showDrawer}

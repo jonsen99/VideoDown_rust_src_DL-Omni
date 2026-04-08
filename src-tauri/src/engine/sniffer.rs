@@ -190,6 +190,31 @@ pub async fn init_sniffer(url: String, app: AppHandle) -> Result<(), String> {
                 return originalXhrSend.apply(this, args);
             };
 
+            // ==========================================
+            // 阶段五：防止链接在新窗口打开 (强制当前窗口)
+            // ==========================================
+            document.addEventListener('click', function(e) {
+                let target = e.target;
+                while (target && target.tagName !== 'A') {
+                    target = target.parentNode;
+                }
+                if (target && target.tagName === 'A') {
+                    // 如果是 target="_blank"，移除它
+                    if (target.getAttribute('target') === '_blank') {
+                        console.log("[DL-Omni] 拦截到 target='_blank' 链接，已重定向至当前窗口");
+                        target.removeAttribute('target');
+                    }
+                }
+            }, true);
+
+            // 劫持 window.open
+            const originalOpen = window.open;
+            window.open = function(url, target, features) {
+                console.log("[DL-Omni] 拦截到 window.open 调用，已重定向至当前窗口");
+                if (target === '_blank') target = '_self';
+                return originalOpen.call(window, url, target, features);
+            };
+
         })();
     "#;
 
