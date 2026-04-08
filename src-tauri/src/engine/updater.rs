@@ -2,6 +2,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::fs;
 use tauri::AppHandle;
+use tokio::process::Command;
 
 #[derive(Deserialize)]
 struct GithubRelease {
@@ -29,30 +30,55 @@ pub fn ensure_binary_exists(app: AppHandle) {
 }
 
 /// 检查 GitHub Release API 并静默更新 yt-dlp
-pub async fn check_and_update(app: AppHandle) -> Result<String, String> {
+/// 返回元组: (是否执行了下载更新, 最终最新版本号)
+pub async fn check_and_update(app: AppHandle) -> Result<(bool, String), String> {
+    let bin_dir = crate::utils::get_binary_dir(&app);
+    let target_filename = crate::utils::get_ytdlp_filename();
+    let final_path = bin_dir.join(&target_filename);
+
+    // 1. 尝试获取本地当前真实版本号
+    let mut local_version = String::new();
+    if final_path.exists() {
+        let mut cmd = Command::new(&final_path);
+        cmd.arg("--version");
+        
+        // 隐藏 Windows 下可能弹出的黑框
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(0x08000000);
+
+        if let Ok(output) = cmd.output().await {
+            if output.status.success() {
+                local_version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            }
+        }
+    }
+
+    // 2. 获取云端最新版本号
     let client = Client::builder()
         .user_agent("dl-omni-updater")
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
 
-    // 请求 GitHub API 获取最新 Release
     let url = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest";
     let release: GithubRelease = client.get(url)
         .send().await.map_err(|e| format!("Network error: {}", e))?
         .json().await.map_err(|e| format!("JSON parse error: {}", e))?;
 
-    let target_filename = crate::utils::get_ytdlp_filename();
-    
-    // 在 Release Assets 中寻找对应的二进制文件
+    let remote_version = release.tag_name.clone();
+
+    // 3. 版本比对：如果一致，则直接返回，跳过耗时的下载过程
+    if !local_version.is_empty() && local_version == remote_version {
+        return Ok((false, remote_version));
+    }
+
+    // 4. 版本不一致或本地文件缺失，开始真正下载新核心
     let asset = release.assets.into_iter()
         .find(|a| a.name == target_filename)
         .ok_or("No matching binary found in the latest release")?;
 
-    let bin_dir = crate::utils::get_binary_dir(&app);
     fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
 
     let tmp_path = bin_dir.join(format!("{}.tmp", target_filename));
-    let final_path = bin_dir.join(&target_filename);
 
     // 下载新版二进制文件到 .tmp 临时路径
     let response = client.get(&asset.browser_download_url)
@@ -75,7 +101,7 @@ pub async fn check_and_update(app: AppHandle) -> Result<String, String> {
         fs::set_permissions(&final_path, perms).map_err(|e| e.to_string())?;
     }
 
-    Ok(release.tag_name)
+    Ok((true, remote_version))
 }
 
 /// 确保 ffmpeg 二进制文件存在，否则触发初次静默下载

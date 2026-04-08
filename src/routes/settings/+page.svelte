@@ -5,6 +5,7 @@
 
   let config = $derived(configStore.settings);
   let isCheckingUpdate = $state(false);
+  let updateStatusText = $state('检查引擎更新');
 
   async function selectDirectory() {
     const selected = await open({ directory: true });
@@ -15,14 +16,24 @@
 
   async function checkUpdate() {
     isCheckingUpdate = true;
+    updateStatusText = '正在获取云端版本...';
     try {
-      const v = await invoke<string>('check_engine_update');
-      configStore.update({ yt_dlp_version: v });
-      alert(`已更新到引擎版本: ${v}`);
+      const res = await invoke<{updated: boolean, version: string}>('check_engine_update');
+      
+      // 更新全局设置中的版本号显示
+      configStore.update({ yt_dlp_version: res.version });
+      
+      // 根据后端比对结果，给予不同的提示
+      if (res.updated) {
+        alert(`更新成功！已下载并替换为最新版本: ${res.version}`);
+      } else {
+        alert(`当前已是最新版: ${res.version}，无需更新。`);
+      }
     } catch(e) {
       alert(`更新失败: ${e}`);
     } finally {
       isCheckingUpdate = false;
+      updateStatusText = '检查引擎更新';
     }
   }
 </script>
@@ -52,7 +63,7 @@
 
       <hr class="border-zinc-800">
 
-      <!-- 【新增】独立文件夹与元数据模式 -->
+      <!-- 独立文件夹与元数据模式 -->
       <div class="flex justify-between items-center">
         <div class="pr-6">
           <div class="text-sm font-medium text-zinc-200">独立目录与附带元数据归档</div>
@@ -170,7 +181,7 @@
           onclick={checkUpdate}
           disabled={isCheckingUpdate}
         >
-          {isCheckingUpdate ? '正在比对云端最新版...' : '检查引擎更新'}
+          {updateStatusText}
         </button>
       </div>
     </div>

@@ -2,6 +2,7 @@ use tauri::{AppHandle, State, command};
 use crate::state::AppState;
 use crate::models::{MediaInfo, Task, Config};
 use crate::engine;
+use serde::Serialize;
 
 #[command]
 pub async fn parse_url(
@@ -25,7 +26,7 @@ pub async fn create_task(
     thumbnail: Option<String>,
     format_id: String,
     playlist_items: Option<String>, 
-    http_headers: Option<String>, // 【新增】接收前端传来的动态 Header (序列化后的 JSON 字符串)
+    http_headers: Option<String>, // 接收前端传来的动态 Header
     app: AppHandle,
     state: State<'_, AppState>
 ) -> Result<String, String> {
@@ -38,7 +39,7 @@ pub async fn create_task(
         thumbnail,
         format_id.clone(),
         playlist_items,
-        http_headers // 【新增】将 Header 存入任务结构体
+        http_headers 
     );
 
     {
@@ -117,9 +118,18 @@ pub async fn open_folder(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Serialize)]
+pub struct EngineUpdateResult {
+    updated: bool,
+    version: String,
+}
+
 #[command]
-pub async fn check_engine_update(app: AppHandle) -> Result<String, String> {
-    engine::updater::check_and_update(app).await.map_err(|e| e.to_string())
+pub async fn check_engine_update(app: AppHandle) -> Result<EngineUpdateResult, String> {
+    engine::updater::check_and_update(app)
+        .await
+        .map(|(updated, version)| EngineUpdateResult { updated, version })
+        .map_err(|e| e.to_string())
 }
 
 #[command]
