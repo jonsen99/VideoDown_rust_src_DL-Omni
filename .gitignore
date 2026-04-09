@@ -9,9 +9,11 @@ node_modules
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 /01.md
+/01base.md
 /02细节.md
 /02合并文件.py
 /03项目代码生成文件.py
+/res.md
 /.idea/.gitignore
 /.idea/dl-omni.iml
 /.idea/modules.xml

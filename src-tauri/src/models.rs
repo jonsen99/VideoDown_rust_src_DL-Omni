@@ -11,6 +11,31 @@ pub enum TaskStatus {
     Completed,
 }
 
+// 【修复】为 TaskStatus 补充双向字符串转换，替代容易出错的 serde_json 强转替换
+impl TaskStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TaskStatus::Pending => "pending",
+            TaskStatus::Downloading => "downloading",
+            TaskStatus::Paused => "paused",
+            TaskStatus::Merging => "merging",
+            TaskStatus::Error => "error",
+            TaskStatus::Completed => "completed",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "pending" => TaskStatus::Pending,
+            "downloading" => TaskStatus::Downloading,
+            "paused" => TaskStatus::Paused,
+            "merging" => TaskStatus::Merging,
+            "completed" => TaskStatus::Completed,
+            _ => TaskStatus::Error,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Task {
     pub id: String,
@@ -20,8 +45,6 @@ pub struct Task {
     pub status: TaskStatus,
     pub format_id: String,
     pub playlist_items: Option<String>, 
-    // 【修改】保留此字段，用于接收和持久化嗅探器捕获的复杂 Headers (包含 Cookie、Referer 等)
-    // 使用 JSON 字符串存储以便于 SQLite 落盘
     pub http_headers: Option<String>, 
     pub total_bytes: u64,
     pub downloaded_bytes: u64,
@@ -105,12 +128,10 @@ pub struct Config {
     pub include_metadata: bool,
 }
 
-// 【修改】专门用于接收前端猫抓级嗅探器发送的复杂资源数据结构
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SniffedResource {
     pub url: String,
-    pub r#type: String, // 资源类型 (video, audio, media)
+    pub r#type: String, 
     pub filename: String,
-    // 动态请求头集合，Tauri 接收后将其序列化为 JSON 字符串存入 Task 的 http_headers 中
     pub headers: Option<std::collections::HashMap<String, String>>, 
 }

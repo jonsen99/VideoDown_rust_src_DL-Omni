@@ -30,14 +30,13 @@ pub struct TaskProgressUpdate {
 
 /// 启动全局进度聚合节流器 (Ticker)
 pub fn start_progress_ticker(app: AppHandle) {
-    // 将 tokio::spawn 替换为 tauri::async_runtime::spawn
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
         loop {
             interval.tick().await;
 
-            // 获取 AppState
-            if let Some(state) = app.state::<AppState>().into() {
+            // 【致命修复】使用 try_state() 替代 .into()，解决编译器无法推断类型导致的编译失败问题
+            if let Some(state) = app.try_state::<AppState>() {
                 let mut buffer = state.progress_buffer.lock().await;
                 
                 if !buffer.is_empty() {

@@ -18,12 +18,13 @@ pub async fn parse_media_info(url: &str, app: AppHandle, state: AppState) -> Res
 
     let mut cmd = Command::new(&ytdlp_path);
 
+    // 【修改点】：增加 --ignore-no-formats-error，强制忽略无格式报错并输出基础元数据
     cmd.arg("--dump-single-json") 
         .arg("--flat-playlist")
         .arg("--no-warnings")      
+        .arg("--ignore-no-formats-error")
         .arg(url);
 
-    // 挂载：使用本地浏览器 Cookie 绕过限制
     if let Some(cookie) = browser_cookie {
         if cookie != "none" && !cookie.is_empty() {
             cmd.arg("--cookies-from-browser").arg(cookie);
@@ -39,7 +40,6 @@ pub async fn parse_media_info(url: &str, app: AppHandle, state: AppState) -> Res
 
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);
-        // 友好的异常拦截：提示 Cookie 数据库被锁定
         if err.contains("database is locked") || err.contains("Could not copy Chrome cookie database") {
             return Err("浏览器Cookie数据库正被占用，请彻底关闭该浏览器后再尝试解析！".into());
         }
@@ -49,7 +49,6 @@ pub async fn parse_media_info(url: &str, app: AppHandle, state: AppState) -> Res
     let json_str = String::from_utf8_lossy(&output.stdout);
     let v: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
 
-    // 提取合集中的子项列表
     let mut playlist_entries = None;
     if let Some(entries) = v.get("entries").and_then(|e| e.as_array()) {
         let mut items = Vec::new();
@@ -70,7 +69,7 @@ pub async fn parse_media_info(url: &str, app: AppHandle, state: AppState) -> Res
         title: v.get("title").and_then(|t| t.as_str()).unwrap_or("Unknown Title").to_string(),
         duration: v.get("duration").and_then(|d| d.as_f64()).unwrap_or(0.0),
         thumbnail: v.get("thumbnail").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-        formats: vec![], // 这里暂时略过 formats 的深度解析，前端按规则过滤即可
+        formats: vec![], 
         playlist_entries,
     })
 }
@@ -96,7 +95,7 @@ fn parse_eta(eta_str: &str) -> u64 {
     seconds
 }
 
-/// 核心下载逻辑 (处理被降级或 M3U8 流媒体)
+/// 核心下载逻辑
 pub async fn download_via_ytdlp(app: AppHandle, state: AppState, task: &Task) -> Result<u64, String> {
     let ytdlp_path = utils::get_ytdlp_path(&app)?;
 
@@ -113,7 +112,6 @@ pub async fn download_via_ytdlp(app: AppHandle, state: AppState, task: &Task) ->
 
     let mut format_arg = task.format_id.clone();
 
-    // 合并与分开下载配置
     if split_av {
         if format_arg.contains('+') { format_arg = format_arg.replace('+', ","); }
         else if !format_arg.contains(',') && format_arg != "best" { format_arg = format!("{},bestaudio", format_arg); }
@@ -123,9 +121,9 @@ pub async fn download_via_ytdlp(app: AppHandle, state: AppState, task: &Task) ->
     }
 
     let mut cmd = Command::new(&ytdlp_path);
+    cmd.kill_on_drop(true); // 【致命修复】确保异步任务被取消时，底层 yt-dlp 进程被杀死，防止僵尸进程
     cmd.arg("-f").arg(&format_arg);
 
-    // FFmpeg 挂载
     if !split_av {
         cmd.arg("--merge-output-format").arg("mp4");
         if let Ok(ffmpeg_path) = utils::get_ffmpeg_path(&app) {
@@ -133,14 +131,12 @@ pub async fn download_via_ytdlp(app: AppHandle, state: AppState, task: &Task) ->
         }
     }
 
-    // --- 全局浏览器 Cookie 挂载 (系统设置项) ---
     if let Some(cookie) = browser_cookie {
         if cookie != "none" && !cookie.is_empty() {
             cmd.arg("--cookies-from-browser").arg(cookie);
         }
     }
 
-    // --- 下载范围 (合集) ---
     if let Some(ref items) = task.playlist_items {
         if !items.is_empty() {
             cmd.arg("--yes-playlist");
@@ -152,7 +148,6 @@ pub async fn download_via_ytdlp(app: AppHandle, state: AppState, task: &Task) ->
         cmd.arg("--no-playlist");
     }
 
-    // --- 元数据目录模式 ---
     if include_metadata {
         cmd.arg("-o").arg(format!("{}/%(title)s/%(title)s.%(ext)s", save_dir));
         cmd.arg("--write-thumbnail")
@@ -165,24 +160,21 @@ pub async fn download_via_ytdlp(app: AppHandle, state: AppState, task: &Task) ->
         cmd.arg("-P").arg(save_dir);
     }
 
-    // --- 【修改】完美挂载嗅探器捕获的防盗链 Headers (包含特定的单次 Cookie) ---
-    // 如果嗅探到了 M3U8 流，且带有防盗链 Cookie 和 Referer，这里会通过 --add-header 逐一喂给 yt-dlp
     if let Some(ref headers_json) = task.http_headers {
         if let Ok(parsed_headers) = serde_json::from_str::<std::collections::HashMap<String, String>>(headers_json) {
             for (key, value) in parsed_headers {
-                // 清洗非法换行符，防止 yt-dlp 参数解析崩溃
                 let clean_value = value.replace('\n', "").replace('\r', "");
                 cmd.arg("--add-header").arg(format!("{}: {}", key, clean_value));
             }
         }
     }
 
-    // 基础配置
     cmd.arg("--concurrent-fragments").arg(max_threads.to_string())
         .arg("--newline")
+        .arg("--no-colors") // 【致命修复】禁用颜色输出，防止 ANSI 转义符破坏正则表达式导致进度条卡死
         .arg(&task.url)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::null());
 
     #[cfg(target_os = "windows")]
     cmd.creation_flags(0x08000000);
@@ -191,7 +183,6 @@ pub async fn download_via_ytdlp(app: AppHandle, state: AppState, task: &Task) ->
     let stdout = child.stdout.take().expect("Failed to open stdout");
     let mut reader = BufReader::new(stdout).lines();
 
-    // 正则解析器 (兼容多视频队列输出)
     let re_pct = Regex::new(r"\[download\]\s+(?P<pct>[0-9\.]+)%").unwrap();
     let re_frag = Regex::new(r"Frag\s+(?P<cur>\d+)/(?P<tot>\d+)").unwrap();
     let re_size = Regex::new(r"of\s+[~]?(?P<size>[0-9\.]+)(?P<unit>[a-zA-Z]+)").unwrap();

@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { MediaInfo, Task, SniffedResource } from '$lib/types';
 import { taskStore } from '$lib/stores/tasks.svelte';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 export const IPC = {
   async parseUrl(url: string): Promise<MediaInfo> {
@@ -14,24 +14,27 @@ export const IPC = {
     thumbnail: string | undefined, 
     formatId: string,
     playlistItems?: string,
-    httpHeaders?: string // 【新增】透传请求头到 Rust
+    httpHeaders?: string 
   ): Promise<string> {
+    // 【规范对齐】显式使用 snake_case 键名，严格匹配后端 #[command(rename_all = "snake_case")]
     return await invoke<string>('create_task', { 
       url, 
       title, 
       thumbnail, 
-      formatId, 
-      playlistItems,
-      httpHeaders // 后端已在 payload 中接收此字段
+      format_id: formatId, 
+      playlist_items: playlistItems,
+      http_headers: httpHeaders 
     });
   },
 
   async pauseTask(taskId: string): Promise<void> {
-    await invoke('pause_task', { taskId });
+    // 【规范对齐】严格匹配后端参数 task_id
+    await invoke('pause_task', { task_id: taskId });
   },
 
   async resumeTask(taskId: string): Promise<void> {
-    await invoke('resume_task', { taskId });
+    // 【规范对齐】严格匹配后端参数 task_id
+    await invoke('resume_task', { task_id: taskId });
   },
 
   async getAllTasks(): Promise<Task[]> {
@@ -39,7 +42,8 @@ export const IPC = {
   },
 
   async cancelTask(taskId: string): Promise<void> {
-    await invoke('cancel_task', { taskId });
+    // 【规范对齐】严格匹配后端参数 task_id
+    await invoke('cancel_task', { task_id: taskId });
   },
 
   async clearHistory(): Promise<void> {
@@ -71,7 +75,6 @@ export const IPC = {
     });
   },
 
-  // 【修改】回调参数使用规范的 SniffedResource 类型
   async listenSniffedResources(callback: (resource: SniffedResource) => void): Promise<UnlistenFn> {
     return await listen<SniffedResource>('sniffed_resource', (event) => {
       callback(event.payload);

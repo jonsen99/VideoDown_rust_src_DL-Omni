@@ -148,7 +148,7 @@ class TaskStore {
     }
   }
 
-  // 【修改】嗅探直链专用入口：跳过 IPC.parseUrl，增加 m3u8 格式判定
+  // 嗅探直链专用入口：跳过 IPC.parseUrl，增加 m3u8 格式判定
   async submitSniffedTask(resource: SniffedResource) {
     const headersStr = resource.headers ? JSON.stringify(resource.headers) : undefined;
     const tempId = this.createTempTask(resource.url, headersStr);

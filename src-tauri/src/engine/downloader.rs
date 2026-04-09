@@ -34,36 +34,32 @@ pub async fn get_direct_link_info(url: &str) -> Result<MediaInfo, String> {
 
 /// 针对直链或分片流的原生多线程下载引擎
 pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> Result<u64, String> {
-    // 1. 解析任务自带的动态 HTTP Headers (由嗅探器捕获的防盗链与 Cookie 信息)
     let mut headers = HeaderMap::new();
     if let Some(headers_json) = &task.http_headers {
         if let Ok(parsed_headers) = serde_json::from_str::<std::collections::HashMap<String, String>>(headers_json) {
             for (k, v) in parsed_headers {
-                // 清理可能导致解析失败的非法空白字符（尤其针对超长且未格式化的 Cookie）
                 let clean_v = v.replace('\n', "").replace('\r', "");
-                if let (Ok(name), Ok(value)) = (HeaderName::from_str(&k), HeaderValue::from_str(&clean_v)) {
+                // 【修复】使用 from_bytes 包容 Cookie 里的非标字符，防止转换崩溃
+                if let (Ok(name), Ok(value)) = (HeaderName::from_str(&k), HeaderValue::from_bytes(clean_v.as_bytes())) {
                     headers.insert(name, value);
                 }
             }
         }
     }
 
-    // 2. 注入 Headers 构建 Client
     let client = Client::builder()
         .user_agent(DEFAULT_USER_AGENT)
-        .default_headers(headers) // 完美挂载包含 Cookie 在内的动态请求头
+        .default_headers(headers)
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())?;
 
     let mut total_size = 0;
 
-    // 先尝试 HEAD 探测总大小
     if let Ok(res) = client.head(&task.url).send().await {
         total_size = res.content_length().unwrap_or(0);
     }
 
-    // 如果 HEAD 失败，尝试 0-0 Range 探测
     if total_size == 0 {
         if let Ok(res) = client.get(&task.url).header("Range", "bytes=0-0").send().await {
             if let Some(cr) = res.headers().get(reqwest::header::CONTENT_RANGE) {
@@ -101,7 +97,6 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
         task.title.clone()
     };
     
-    // 确保文件名带有正确后缀，防备无后缀的 API 直链落盘
     let final_filename = if !filename.contains('.') { format!("{}.mp4", filename) } else { filename };
     let file_path = std::path::Path::new(&save_dir).join(&final_filename);
 
@@ -133,14 +128,19 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
     
     let reporter_handle = tokio::spawn(async move {
         let mut last_bytes = 0;
+        let mut smoothed_speed = 0.0;
+        
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             let current_bytes = downloaded_clone.load(Ordering::Relaxed);
             
-            let speed = (current_bytes.saturating_sub(last_bytes)) as f64 * 2.0;
+            let instant_speed = (current_bytes.saturating_sub(last_bytes)) as f64 * 2.0;
+            // 【优化】使用指数移动平均(EMA)平滑下载速度，避免 UI 数值剧烈跳动
+            smoothed_speed = if smoothed_speed == 0.0 { instant_speed } else { smoothed_speed * 0.7 + instant_speed * 0.3 };
+            
             let mut eta = 0;
-            if reporter_total > 0 && speed > 0.0 {
-                eta = (reporter_total.saturating_sub(current_bytes) as f64 / speed) as u64;
+            if reporter_total > 0 && smoothed_speed > 0.0 {
+                eta = (reporter_total.saturating_sub(current_bytes) as f64 / smoothed_speed) as u64;
             }
 
             let mut buffer = state_clone.progress_buffer.lock().await;
@@ -148,7 +148,7 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
                 id: task_id.clone(),
                 downloaded_bytes: current_bytes,
                 total_bytes: reporter_total,
-                speed,
+                speed: smoothed_speed,
                 eta,
                 status: TaskStatus::Downloading,
             });
@@ -208,8 +208,10 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
 
     let final_size = if is_stream_fallback { downloaded.load(Ordering::Relaxed) } else { total_size };
 
-    if final_size == 0 {
-        return Err("下载失败: 链接已失效或服务器因缺少 Header/Cookie 拒绝了连接 (403/401)".into());
+    // 【优化】清理失败任务的残留文件
+    if final_size == 0 || (total_size > 0 && final_size < total_size) {
+        let _ = std::fs::remove_file(&file_path);
+        return Err("下载失败: 链接已失效、服务器断开连接或任务被取消".into());
     }
 
     Ok(final_size)

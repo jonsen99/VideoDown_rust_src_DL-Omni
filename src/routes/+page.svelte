@@ -55,7 +55,22 @@
         inputUrl = '';
       }
     } catch (e: any) {
-      parseError = e?.toString() || '解析失败，请检查链接或网络';
+      // 【修改点】：前端兜底机制，无论解析报什么错，都强制把任务入队
+      console.warn('常规解析失败，触发强制兜底入队机制:', e);
+      showNewTaskModal = false;
+      const tempId = taskStore.createTempTask(inputUrl, undefined);
+      
+      // 构造一个兜底用的虚假 MediaInfo 数据强行推送任务
+      const fallbackInfo: MediaInfo = {
+        id: 'force_fallback',
+        title: '未知媒体任务 (强制解析入队)',
+        duration: 0,
+        thumbnail: '',
+        formats: []
+      };
+      
+      await taskStore.commitTask(tempId, inputUrl, fallbackInfo, undefined, undefined);
+      inputUrl = '';
     } finally {
       isParsing = false;
     }

@@ -12,8 +12,8 @@ class ConfigStore {
     split_audio_video: false, 
     video_quality: 'best',    
     audio_quality: 'best',    
-    browser_cookie: 'none',    // 【新增】默认不使用浏览器 Cookie
-    include_metadata: false,   // 【新增】默认不开启独立文件夹与元数据
+    browser_cookie: 'none',    
+    include_metadata: false,   
   });
 
   /**
@@ -34,7 +34,8 @@ class ConfigStore {
   async update(partial: Partial<Config>) {
     Object.assign(this.settings, partial);
     try {
-      await invoke('update_config', { newConfig: $state.snapshot(this.settings) });
+      // 【规范对齐】显式传递 snake_case 参数 new_config
+      await invoke('update_config', { new_config: $state.snapshot(this.settings) });
     } catch (e) {
       console.error('Failed to update config:', e);
     }

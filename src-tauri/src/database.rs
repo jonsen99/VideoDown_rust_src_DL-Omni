@@ -19,7 +19,6 @@ impl Db {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
 
-        // 【修改】初始化表结构 (新增 http_headers)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
@@ -40,9 +39,8 @@ impl Db {
             [],
         )?;
 
-        // 平滑迁移旧数据库
         let _ = conn.execute("ALTER TABLE tasks ADD COLUMN playlist_items TEXT", []);
-        let _ = conn.execute("ALTER TABLE tasks ADD COLUMN http_headers TEXT", []); // 【新增】字段迁移
+        let _ = conn.execute("ALTER TABLE tasks ADD COLUMN http_headers TEXT", []); 
 
         let mut db = Self { conn };
         db.recover_orphan_tasks()?; 
@@ -50,7 +48,8 @@ impl Db {
     }
 
     pub fn insert_task(&self, task: &Task) -> SqlResult<()> {
-        let status_str = serde_json::to_string(&task.status).unwrap_or_default().replace("\"", "");
+        // 【优化】放弃 JSON 强转序列化并截取双引号的脆弱方法，直接调用内部转换
+        let status_str = task.status.as_str();
         self.conn.execute(
             "INSERT INTO tasks (id, url, title, thumbnail, status, format_id, total_bytes, downloaded_bytes, speed, eta, created_at, error_msg, playlist_items, http_headers)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
@@ -64,13 +63,13 @@ impl Db {
     }
 
     pub fn update_status(&self, id: &str, status: TaskStatus) -> SqlResult<()> {
-        let status_str = serde_json::to_string(&status).unwrap_or_default().replace("\"", "");
+        let status_str = status.as_str();
         self.conn.execute("UPDATE tasks SET status = ?1 WHERE id = ?2", params![status_str, id])?;
         Ok(())
     }
 
     pub fn update_task_finish(&self, id: &str, status: TaskStatus, total_bytes: u64) -> SqlResult<()> {
-        let status_str = serde_json::to_string(&status).unwrap_or_default().replace("\"", "");
+        let status_str = status.as_str();
         self.conn.execute("UPDATE tasks SET status = ?1, total_bytes = ?2, downloaded_bytes = ?2 WHERE id = ?3", params![status_str, total_bytes, id])?;
         Ok(())
     }
@@ -79,7 +78,8 @@ impl Db {
         let mut stmt = self.conn.prepare("SELECT id, url, title, thumbnail, status, format_id, total_bytes, downloaded_bytes, speed, eta, created_at, error_msg, playlist_items, http_headers FROM tasks ORDER BY created_at DESC")?;
         let task_iter = stmt.query_map([], |row| {
             let status_str: String = row.get(4)?;
-            let status: TaskStatus = serde_json::from_str(&format!("\"{}\"", status_str)).unwrap_or(TaskStatus::Error);
+            // 【优化】使用枚举自带的 from_str 反序列化，抛弃危险的字符串拼接
+            let status = TaskStatus::from_str(&status_str);
 
             Ok(Task {
                 id: row.get(0)?,
@@ -95,7 +95,7 @@ impl Db {
                 created_at: row.get(10)?,
                 error_msg: row.get(11)?,
                 playlist_items: row.get(12)?,
-                http_headers: row.get(13)?, // 【新增】读取 header
+                http_headers: row.get(13)?, 
             })
         })?;
 
@@ -112,7 +112,7 @@ impl Db {
 
         if let Some(row) = rows.next()? {
             let status_str: String = row.get(4)?;
-            let status: TaskStatus = serde_json::from_str(&format!("\"{}\"", status_str)).unwrap_or(TaskStatus::Error);
+            let status = TaskStatus::from_str(&status_str);
 
             Ok(Some(Task {
                 id: row.get(0)?,
@@ -128,7 +128,7 @@ impl Db {
                 created_at: row.get(10)?,
                 error_msg: row.get(11)?,
                 playlist_items: row.get(12)?,
-                http_headers: row.get(13)?, // 【新增】读取 header
+                http_headers: row.get(13)?, 
             }))
         } else {
             Ok(None)
@@ -141,6 +141,7 @@ impl Db {
     }
 
     pub fn clear_history(&self) -> SqlResult<()> {
+        // 兼容处理可能存在旧数据的格式
         self.conn.execute("DELETE FROM tasks WHERE status = '\"completed\"' OR status = 'completed'", [])?;
         Ok(())
     }

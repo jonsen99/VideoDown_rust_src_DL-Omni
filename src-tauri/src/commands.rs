@@ -19,14 +19,16 @@ pub async fn parse_url(
         .map_err(|e| format!("解析失败: {}", e))
 }
 
-#[command]
+// 【修复】指定宏属性强制识别前端发送的 snake_case 命名风格，
+// 防止前端手写了 format_id 后在反序列化中与默认的 formatId 要求冲突导致报错。
+#[command(rename_all = "snake_case")]
 pub async fn create_task(
     url: String,
     title: String,
     thumbnail: Option<String>,
     format_id: String,
     playlist_items: Option<String>, 
-    http_headers: Option<String>, // 接收前端传来的动态 Header
+    http_headers: Option<String>,
     app: AppHandle,
     state: State<'_, AppState>
 ) -> Result<String, String> {
@@ -43,15 +45,17 @@ pub async fn create_task(
     );
 
     {
-        let db = state.db.lock().await;
-        db.insert_task(&new_task).map_err(|e| e.to_string())?;
+        let db = state.db.clone();
+        let task_clone = new_task.clone();
+        let db_lock = db.lock().await;
+        db_lock.insert_task(&task_clone).map_err(|e| e.to_string())?;
     }
 
     engine::dispatch_task(app, state.inner().clone(), new_task).await?;
     Ok(task_id)
 }
 
-#[command]
+#[command(rename_all = "snake_case")]
 pub async fn pause_task(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut active_tasks = state.active_tasks.lock().await;
     if let Some(handle) = active_tasks.remove(&task_id) {
@@ -64,7 +68,7 @@ pub async fn pause_task(task_id: String, state: State<'_, AppState>) -> Result<(
     Ok(())
 }
 
-#[command]
+#[command(rename_all = "snake_case")]
 pub async fn resume_task(task_id: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let task = {
         let db = state.db.lock().await;
@@ -85,7 +89,7 @@ pub async fn get_all_tasks(state: State<'_, AppState>) -> Result<Vec<Task>, Stri
     db.get_all_tasks().map_err(|e| e.to_string())
 }
 
-#[command]
+#[command(rename_all = "snake_case")]
 pub async fn cancel_task(task_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut active_tasks = state.active_tasks.lock().await;
     if let Some(handle) = active_tasks.remove(&task_id) {
@@ -132,7 +136,8 @@ pub async fn check_engine_update(app: AppHandle) -> Result<EngineUpdateResult, S
         .map_err(|e| e.to_string())
 }
 
-#[command]
+// 【修复】匹配前端设置页面的 new_config 传参（强制映射前台传来的 { new_config: ... } ）
+#[command(rename_all = "snake_case")]
 pub async fn update_config(new_config: Config, state: State<'_, AppState>) -> Result<(), String> {
     let mut config = state.config.lock().await;
     config.update(new_config).map_err(|e| e.to_string())?;
@@ -145,7 +150,7 @@ pub async fn get_config(state: State<'_, AppState>) -> Result<Config, String> {
     Ok(config.settings.clone())
 }
 
-#[command]
+#[command(rename_all = "snake_case")]
 pub async fn start_sniffing(url: String, app: AppHandle) -> Result<(), String> {
     engine::sniffer::init_sniffer(url, app).await.map_err(|e| format!("启动嗅探器失败: {}", e))
 }
