@@ -179,3 +179,50 @@ pub async fn check_and_update_ffmpeg(app: AppHandle) -> Result<String, String> {
 
     Ok(release.tag_name)
 }
+
+/// 将打包内置的二进制引擎拷贝到工作目录（用于离线完整版）
+pub fn release_bundled_binaries(app: &AppHandle) {
+    let bin_dir = crate::utils::get_binary_dir(app);
+    let _ = fs::create_dir_all(&bin_dir);
+
+    // 获取 Tauri 打包的资源目录
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let bundled_bin_dir = resource_dir.join("binaries");
+
+        let ytdlp_name = crate::utils::get_ytdlp_filename();
+        let ffmpeg_name = crate::utils::get_ffmpeg_filename();
+
+        let target_ytdlp = bin_dir.join(ytdlp_name);
+        let target_ffmpeg = bin_dir.join(ffmpeg_name);
+
+        let bundled_ytdlp = bundled_bin_dir.join(ytdlp_name);
+        let bundled_ffmpeg = bundled_bin_dir.join(ffmpeg_name);
+
+        // 如果工作目录没有 yt-dlp，且打包资源里有，则拷贝
+        if !target_ytdlp.exists() && bundled_ytdlp.exists() {
+            tracing::info!("检测到内置 yt-dlp，正在释放...");
+            let _ = fs::copy(&bundled_ytdlp, &target_ytdlp);
+            set_executable_permission(&target_ytdlp);
+        }
+
+        // 如果工作目录没有 ffmpeg，且打包资源里有，则拷贝
+        if !target_ffmpeg.exists() && bundled_ffmpeg.exists() {
+            tracing::info!("检测到内置 ffmpeg，正在释放...");
+            let _ = fs::copy(&bundled_ffmpeg, &target_ffmpeg);
+            set_executable_permission(&target_ffmpeg);
+        }
+    }
+}
+
+/// 辅助函数：为 Unix 系统设置可执行权限 (Windows 下为空操作)
+pub fn set_executable_permission(_path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = std::fs::metadata(_path) {
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o755);
+            let _ = std::fs::set_permissions(_path, perms);
+        }
+    }
+}

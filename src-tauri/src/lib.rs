@@ -48,6 +48,10 @@ pub fn run() {
             // 启动进度聚合定时器，每 200ms 向前端推送一次批量进度
             state::start_progress_ticker(app.handle().clone());
 
+            // ================= 新增：优先释放内置引擎 =================
+            engine::updater::release_bundled_binaries(app.handle());
+            // =========================================================
+
             // 检查或下载内置环境依赖 (如 yt-dlp)
             engine::updater::ensure_binary_exists(app.handle().clone());
             
