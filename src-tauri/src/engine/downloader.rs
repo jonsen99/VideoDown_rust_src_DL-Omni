@@ -13,14 +13,26 @@ use crate::utils;
 
 const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-pub async fn get_direct_link_info(url: &str) -> Result<MediaInfo, String> {
-    let client = Client::builder()
+pub async fn get_direct_link_info(url: &str, state: AppState) -> Result<MediaInfo, String> {
+    let proxy_url = {
+        let config = state.config.lock().await;
+        config.settings.proxy_url.clone()
+    };
+
+    let mut builder = Client::builder()
         .user_agent(DEFAULT_USER_AGENT)
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())?;
+        .timeout(std::time::Duration::from_secs(15));
+        
+    if !proxy_url.trim().is_empty() {
+        if let Ok(p) = reqwest::Proxy::all(&proxy_url) {
+            builder = builder.proxy(p);
+        }
+    }
+
+    let client = builder.build().map_err(|e| e.to_string())?;
 
     let _ = client.get(url).header("Range", "bytes=0-0").send().await;
+
     let filename = utils::extract_filename_from_url(url);
 
     Ok(MediaInfo {
@@ -35,13 +47,14 @@ pub async fn get_direct_link_info(url: &str) -> Result<MediaInfo, String> {
 
 /// 具备自愈重试与断点续传能力的原生下载引擎
 pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> Result<u64, String> {
-    tracing::info!("初始化下载任务: [{}] {}", task.id, task.title);
+    // tracing::info!("初始化下载任务: [{}] {}", task.id, task.title);
 
     let mut headers = HeaderMap::new();
     if let Some(headers_json) = &task.http_headers {
         if let Ok(parsed_headers) = serde_json::from_str::<std::collections::HashMap<String, String>>(headers_json) {
             for (k, v) in parsed_headers {
                 let clean_v = v.replace('\n', "").replace('\r', "");
+                // 使用 from_bytes 包容 Cookie 里的非标字符，防止转换崩溃
                 if let (Ok(name), Ok(value)) = (HeaderName::from_str(&k), HeaderValue::from_bytes(clean_v.as_bytes())) {
                     headers.insert(name, value);
                 }
@@ -49,23 +62,37 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
         }
     }
 
-    let client = Client::builder()
+    let proxy_url = {
+        let config = state.config.lock().await;
+        config.settings.proxy_url.clone()
+    };
+
+    let mut builder = Client::builder()
         .user_agent(DEFAULT_USER_AGENT)
         .default_headers(headers)
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| e.to_string())?;
+        .timeout(std::time::Duration::from_secs(30));
+
+    if !proxy_url.trim().is_empty() {
+        if let Ok(p) = reqwest::Proxy::all(&proxy_url) {
+            builder = builder.proxy(p);
+        }
+    }
+
+    let client = builder.build().map_err(|e| e.to_string())?;
 
     let mut total_size = 0;
     let mut real_filename: Option<String> = None;
     let mut real_ext: Option<String> = None;
 
-    // 获取文件元数据
+    // 发起 HEAD 请求获取元数据
     if let Ok(res) = client.head(&task.url).send().await {
         total_size = res.content_length().unwrap_or(0);
+        
+        // 尝试从 Content-Disposition 提取真实文件名
         if let Some(cd) = res.headers().get(reqwest::header::CONTENT_DISPOSITION).and_then(|v| v.to_str().ok()) {
             real_filename = utils::parse_filename_from_header(cd);
         }
+        // 尝试从 Content-Type 提取真实后缀
         if let Some(ct) = res.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()) {
             if let Some(ext) = utils::get_extension_from_mime(ct) {
                 real_ext = Some(ext.to_string());
@@ -73,7 +100,7 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
         }
     }
 
-    // 降级获取
+    // 如果 HEAD 不支持，使用 GET byte=0-0 降级获取
     if total_size == 0 {
         if let Ok(res) = client.get(&task.url).header("Range", "bytes=0-0").send().await {
             if let Some(cr) = res.headers().get(reqwest::header::CONTENT_RANGE) {
@@ -86,6 +113,7 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
             if total_size == 0 {
                 total_size = res.content_length().unwrap_or(0);
             }
+
             if real_filename.is_none() {
                 if let Some(cd) = res.headers().get(reqwest::header::CONTENT_DISPOSITION).and_then(|v| v.to_str().ok()) {
                     real_filename = utils::parse_filename_from_header(cd);
@@ -102,6 +130,7 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
     }
 
     let is_stream_fallback = total_size == 0;
+
     let (save_dir, mut max_threads) = {
         let config = state.config.lock().await;
         (
@@ -121,29 +150,38 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
     if base_name.is_empty() || base_name == "unknown_file" || base_name.starts_with("嗅探资源") {
         base_name = utils::extract_filename_from_url(&task.url);
     }
+    
+    // 清洗由于前端模板造成的畸形 unknown 后缀
     base_name = base_name.replace(".unknown.unknown", "").replace(".unknown", "");
+    // 清洗因为模板中 "[title] - [name]" 名字为空而遗留的尾部 " - "
     let trimmed_name = base_name.trim_end_matches(" - ").trim_end_matches(" -").to_string();
     base_name = if trimmed_name.is_empty() { "download_file".to_string() } else { trimmed_name };
 
     let mut final_filename = base_name.clone();
+
+    // 如果服务器返回了真实名字，融合服务器后缀与前端标题
     if let Some(rf) = real_filename {
         let sanitized_rf = utils::sanitize_filename(&rf);
         if let Some(ext_idx) = sanitized_rf.rfind('.') {
-            let ext = &sanitized_rf[ext_idx..];
+            let ext = &sanitized_rf[ext_idx..]; // 包含 . 点号
             final_filename = format!("{}{}", base_name, ext);
-        } else if !final_filename.contains('.') {
-            let e = real_ext.unwrap_or_else(|| "mp4".to_string());
-            final_filename = format!("{}.{}", final_filename, e);
+        } else {
+            if !final_filename.contains('.') {
+                let e = real_ext.unwrap_or_else(|| "mp4".to_string());
+                final_filename = format!("{}.{}", final_filename, e);
+            }
         }
-    } else if !final_filename.contains('.') {
-        let ext = real_ext.unwrap_or_else(|| "mp4".to_string());
-        final_filename = format!("{}.{}", final_filename, ext);
+    } else {
+        // 如果服务器没有返回真实名字，使用 MIME 兜底后缀
+        if !final_filename.contains('.') {
+            let ext = real_ext.unwrap_or_else(|| "mp4".to_string());
+            final_filename = format!("{}.{}", final_filename, ext);
+        }
     }
+    // ======================================================
 
     let file_path = std::path::Path::new(&save_dir).join(&final_filename);
     let part_file_path = file_path.with_extension("omni.part");
-
-    tracing::info!("文件路径分配: {:?}", file_path);
 
     // ================= 断点续传状态机 =================
     let mut state_file = TaskStateFile {
@@ -161,22 +199,19 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
             if let Ok(part_data) = tokio::fs::read_to_string(&part_file_path).await {
                 if let Ok(saved_state) = serde_json::from_str::<TaskStateFile>(&part_data) {
                     if saved_state.total_bytes == total_size {
-                        tracing::info!("检测到有效的断点续传状态，正在恢复...");
+                        // tracing::info!("检测到有效的断点续传状态，正在恢复...");
                         state_file = saved_state;
                         is_resume_valid = true;
                         
                         for chunk in &state_file.chunks {
                             initial_downloaded += chunk.current_offset;
                         }
-                    } else {
-                        tracing::warn!("本地进度快照与服务器文件大小不符，将重新开始下载");
                     }
                 }
             }
         }
 
         if !is_resume_valid {
-            tracing::info!("创建新的分片分配，总大小: {} bytes，线程数: {}", total_size, max_threads);
             let file = tokio::fs::File::create(&file_path).await.map_err(|e| e.to_string())?;
             file.set_len(total_size).await.map_err(|e| e.to_string())?;
             
@@ -197,7 +232,6 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
             tokio::fs::write(&part_file_path, json).await.map_err(|e| e.to_string())?;
         }
     } else {
-        tracing::warn!("目标为流式数据或无法获取大小，降级为单线程追加模式");
         let _ = tokio::fs::File::create(&file_path).await.map_err(|e| e.to_string())?;
     }
 
@@ -262,6 +296,7 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
             let current_bytes = reporter_downloaded.load(Ordering::Relaxed);
             
             let instant_speed = (current_bytes.saturating_sub(last_bytes)) as f64 * 2.0;
+            // 使用指数移动平均(EMA)平滑下载速度，避免 UI 数值剧烈跳动
             smoothed_speed = if smoothed_speed == 0.0 { instant_speed } else { smoothed_speed * 0.7 + instant_speed * 0.3 };
             
             let mut eta = 0;
@@ -305,14 +340,12 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
                             let len = chunk.len() as u64;
                             if tx_clone.send((0, current_offset, chunk)).await.is_err() { return Err("写入通道已关闭".into()); }
                             current_offset += len;
-                            // retries = 0; // 成功读取数据，重置重试次数
                         }
                         break; // 正常结束流
                     }
                     Err(e) => {
                         retries += 1;
                         if retries > 5 { return Err(format!("流式下载多次重试失败: {}", e)); }
-                        tracing::warn!("流式下载中断，2秒后尝试重连 (重试 {}/5)", retries);
                         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                     }
                 }
@@ -337,7 +370,6 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
 
                     if start > end { break; } 
 
-                    tracing::debug!("分片 [{}] 发起请求 Range: bytes={}-{}", chunk.id, start, end);
                     let req = client_clone.get(&url).header("Range", format!("bytes={}-{}", start, end)).send().await;
 
                     match req {
@@ -359,19 +391,16 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
                             }
 
                             if local_offset >= (chunk.end - chunk.start + 1) {
-                                tracing::info!("分片 [{}] 下载完成", chunk.id);
                                 break;
                             } else {
                                 // 意外中断，进入下一轮重试循环
                                 retries += 1;
-                                tracing::warn!("分片 [{}] 意外中断，进入重试阶段...", chunk.id);
                             }
                         }
                         Err(e) => {
                             retries += 1;
                             if retries > 5 { return Err(format!("分片 [{}] 网络彻底失败: {}", chunk.id, e)); }
                             let backoff = 2_u64.pow(retries);
-                            tracing::warn!("分片 [{}] 网络错误，{}秒后重试: {}", chunk.id, backoff, e);
                             tokio::time::sleep(tokio::time::Duration::from_secs(backoff)).await;
                         }
                     }
@@ -411,7 +440,6 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
     reporter_handle.abort();
 
     if has_fatal_error {
-        tracing::error!("任务下载失败被终止: {}", error_message);
         return Err(error_message);
     }
 
@@ -421,7 +449,6 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
     if !is_stream_fallback {
         if let Ok(metadata) = tokio::fs::metadata(&file_path).await {
             if metadata.len() != total_size || final_size != total_size {
-                tracing::error!("数据完整性校验失败! 预期: {}, 内存累加: {}, 磁盘实际: {}", total_size, final_size, metadata.len());
                 let _ = tokio::fs::remove_file(&file_path).await;
                 return Err("数据不完整或文件系统写入失败，已被安全销毁".into());
             }
@@ -431,7 +458,12 @@ pub async fn download_native(_app: AppHandle, state: AppState, task: &Task) -> R
 
         // 校验完美通过，清理状态文件
         let _ = tokio::fs::remove_file(&part_file_path).await;
-        tracing::info!("任务校验通过，下载圆满完成。");
+    } else {
+        // 清理失败任务的残留文件
+        if final_size == 0 || (total_size > 0 && final_size < total_size) {
+            let _ = std::fs::remove_file(&file_path);
+            return Err("下载失败: 链接已失效、服务器断开连接或任务被取消".into());
+        }
     }
 
     Ok(final_size)

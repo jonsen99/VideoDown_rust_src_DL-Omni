@@ -1,8 +1,9 @@
 use reqwest::Client;
 use serde::Deserialize;
 use std::fs;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tokio::process::Command;
+use crate::state::AppState;
 
 #[derive(Deserialize)]
 struct GithubRelease {
@@ -16,11 +17,31 @@ struct GithubAsset {
     browser_download_url: String,
 }
 
+// 辅助方法：创建携带代理的 HTTP 客户端
+async fn create_client(app: &AppHandle) -> Result<Client, String> {
+    let proxy_url = if let Some(state) = app.try_state::<AppState>() {
+        let config = state.config.lock().await;
+        config.settings.proxy_url.clone()
+    } else {
+        String::new()
+    };
+
+    let mut builder = Client::builder().user_agent("dl-omni-updater");
+
+    if !proxy_url.trim().is_empty() {
+        if let Ok(p) = reqwest::Proxy::all(&proxy_url) {
+            builder = builder.proxy(p);
+        }
+    }
+
+    builder.build().map_err(|e| format!("构建 HTTP 客户端失败: {}", e))
+}
+
 /// 确保二进制文件存在，否则触发初次静默下载
 pub fn ensure_binary_exists(app: AppHandle) {
     let bin_dir = crate::utils::get_binary_dir(&app);
     let bin_path = bin_dir.join(crate::utils::get_ytdlp_filename());
-    
+
     if !bin_path.exists() {
         tauri::async_runtime::spawn(async move {
             let _ = check_and_update(app).await;
@@ -37,7 +58,7 @@ pub async fn check_and_update(app: AppHandle) -> Result<(bool, String), String> 
     if final_path.exists() {
         let mut cmd = Command::new(&final_path);
         cmd.arg("--version");
-        
+
         #[cfg(target_os = "windows")]
         cmd.creation_flags(0x08000000);
 
@@ -48,15 +69,22 @@ pub async fn check_and_update(app: AppHandle) -> Result<(bool, String), String> 
         }
     }
 
-    let client = Client::builder()
-        .user_agent("dl-omni-updater")
-        .build()
-        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+    let client = create_client(&app).await?;
 
     let url = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest";
-    let release: GithubRelease = client.get(url)
-        .send().await.map_err(|e| format!("Network error: {}", e))?
-        .json().await.map_err(|e| format!("JSON parse error: {}", e))?;
+    let response = client.get(url)
+        .send().await.map_err(|e| format!("网络连接失败: {}", e))?;
+
+    // 核心修复：先提取 status，因为 response.text() 会 consume (move) response 本身
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(format!("请求 GitHub API 失败 (HTTP {}): {}", status, text));
+    }
+
+    let text = response.text().await.map_err(|e| format!("读取响应失败: {}", e))?;
+    let release: GithubRelease = serde_json::from_str(&text)
+        .map_err(|e| format!("JSON 解析失败: {}", e))?;
 
     let remote_version = release.tag_name.clone();
 
@@ -74,7 +102,7 @@ pub async fn check_and_update(app: AppHandle) -> Result<(bool, String), String> 
 
     let response = client.get(&asset.browser_download_url)
         .send().await.map_err(|e| e.to_string())?;
-    
+
     let bytes = response.bytes().await.map_err(|e| e.to_string())?;
     fs::write(&tmp_path, bytes).map_err(|e| e.to_string())?;
 
@@ -94,7 +122,7 @@ pub async fn check_and_update(app: AppHandle) -> Result<(bool, String), String> 
 pub fn ensure_ffmpeg_exists(app: AppHandle) {
     let bin_dir = crate::utils::get_binary_dir(&app);
     let bin_path = bin_dir.join(crate::utils::get_ffmpeg_filename());
-    
+
     if !bin_path.exists() {
         tauri::async_runtime::spawn(async move {
             let _ = check_and_update_ffmpeg(app).await;
@@ -103,19 +131,25 @@ pub fn ensure_ffmpeg_exists(app: AppHandle) {
 }
 
 pub async fn check_and_update_ffmpeg(app: AppHandle) -> Result<String, String> {
-    let client = Client::builder()
-        .user_agent("dl-omni-updater")
-        .build()
-        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+    let client = create_client(&app).await?;
 
     let url = "https://api.github.com/repos/eugeneware/ffmpeg-static/releases/latest";
-    let release: GithubRelease = client.get(url)
-        .send().await.map_err(|e| format!("Network error: {}", e))?
-        .json().await.map_err(|e| format!("JSON parse error: {}", e))?;
+    let response = client.get(url)
+        .send().await.map_err(|e| format!("网络连接失败: {}", e))?;
+
+    // 核心修复：同上，提取 status 防止被 move
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(format!("请求 GitHub API 失败 (HTTP {}): {}", status, text));
+    }
+
+    let text = response.text().await.map_err(|e| format!("读取响应失败: {}", e))?;
+    let release: GithubRelease = serde_json::from_str(&text)
+        .map_err(|e| format!("JSON 解析失败: {}", e))?;
 
     let target_asset_name = crate::utils::get_ffmpeg_asset_name();
-    
-    // 【致命修复】放宽匹配规则，防止因为仓库命名规则小改动导致找不到文件
+
     let asset = release.assets.into_iter()
         .find(|a| a.name.contains(target_asset_name) && !a.name.ends_with(".zip") && !a.name.ends_with(".gz"))
         .ok_or(format!("No matching raw ffmpeg binary '{}' found. (Please consider using Tauri Sidecar for ffmpeg)", target_asset_name))?;
@@ -129,7 +163,7 @@ pub async fn check_and_update_ffmpeg(app: AppHandle) -> Result<String, String> {
 
     let response = client.get(&asset.browser_download_url)
         .send().await.map_err(|e| e.to_string())?;
-    
+
     let bytes = response.bytes().await.map_err(|e| e.to_string())?;
     fs::write(&tmp_path, bytes).map_err(|e| e.to_string())?;
 

@@ -18,9 +18,9 @@ fn get_internal_cookie_path(app: &AppHandle) -> PathBuf {
 pub async fn parse_media_info(url: &str, app: AppHandle, state: AppState) -> Result<MediaInfo, String> {
     let ytdlp_path = utils::get_ytdlp_path(&app)?;
 
-    let use_cookie = {
+    let (use_cookie, proxy_url) = {
         let config = state.config.lock().await;
-        config.settings.use_cookie
+        (config.settings.use_cookie, config.settings.proxy_url.clone())
     };
 
     let mut cmd = Command::new(&ytdlp_path);
@@ -38,6 +38,10 @@ pub async fn parse_media_info(url: &str, app: AppHandle, state: AppState) -> Res
         if cookie_file.exists() {
             cmd.arg("--cookies").arg(cookie_file);
         }
+    }
+
+    if !proxy_url.trim().is_empty() {
+        cmd.arg("--proxy").arg(&proxy_url);
     }
 
     #[cfg(target_os = "windows")]
@@ -113,14 +117,15 @@ fn parse_eta(eta_str: &str) -> u64 {
 pub async fn download_via_ytdlp(app: AppHandle, state: AppState, task: &Task) -> Result<u64, String> {
     let ytdlp_path = utils::get_ytdlp_path(&app)?;
 
-    let (save_dir, max_threads, split_av, use_cookie, include_metadata) = {
+    let (save_dir, max_threads, split_av, use_cookie, include_metadata, proxy_url) = {
         let config = state.config.lock().await;
         (
             config.settings.default_download_path.clone(),
             config.settings.max_threads_per_task.max(1),
             config.settings.split_audio_video,
             config.settings.use_cookie,
-            config.settings.include_metadata
+            config.settings.include_metadata,
+            config.settings.proxy_url.clone()
         )
     };
 
@@ -151,6 +156,10 @@ pub async fn download_via_ytdlp(app: AppHandle, state: AppState, task: &Task) ->
         if cookie_file.exists() {
             cmd.arg("--cookies").arg(cookie_file);
         }
+    }
+
+    if !proxy_url.trim().is_empty() {
+        cmd.arg("--proxy").arg(&proxy_url);
     }
 
     if let Some(ref items) = task.playlist_items {

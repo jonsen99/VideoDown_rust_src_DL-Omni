@@ -117,16 +117,17 @@ pub struct Config {
     pub default_download_path: String,
     pub max_concurrent_tasks: u8,
     pub max_threads_per_task: u8,
-    pub proxy_url: Option<String>,
+    #[serde(default)]
+    pub proxy_url: String,         // 修改：统一为 String 防止序列化异常
     pub theme: String,
     pub yt_dlp_version: Option<String>,
     pub split_audio_video: bool,
     pub video_quality: String,
     pub audio_quality: String,
-    pub use_cookie: bool,
+    pub use_cookie: bool,          
     pub include_metadata: bool,
-    pub naming_template: String,
-    pub sniff_blacklist: String,
+    pub naming_template: String,   
+    pub sniff_blacklist: String,   
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -134,13 +135,13 @@ pub struct SniffedResource {
     pub url: String,
     pub r#type: String, 
     pub filename: String,
-    pub page_title: Option<String>,
-    pub original_name: Option<String>,
-    pub ext: Option<String>,
+    pub page_title: Option<String>,     
+    pub original_name: Option<String>,  
+    pub ext: Option<String>,            
     pub headers: Option<std::collections::HashMap<String, String>>, 
 }
 
-// ================= 新增：断点续传状态持久化模型 =================
+// ================= 恢复：断点续传状态持久化模型 =================
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChunkState {

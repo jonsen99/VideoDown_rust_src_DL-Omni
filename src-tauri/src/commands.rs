@@ -11,7 +11,8 @@ pub async fn parse_url(
     state: State<'_, AppState>
 ) -> Result<MediaInfo, String> {
     if crate::utils::is_direct_link(&url) {
-        return engine::downloader::get_direct_link_info(&url).await;
+        // 修改：将 state 传递给原生解析器以获取代理信息
+        return engine::downloader::get_direct_link_info(&url, state.inner().clone()).await;
     }
 
     engine::ytdlp::parse_media_info(&url, app, state.inner().clone())
@@ -19,8 +20,6 @@ pub async fn parse_url(
         .map_err(|e| format!("解析失败: {}", e))
 }
 
-// 【修复】指定宏属性强制识别前端发送的 snake_case 命名风格，
-// 防止前端手写了 format_id 后在反序列化中与默认的 formatId 要求冲突导致报错。
 #[command(rename_all = "snake_case")]
 pub async fn create_task(
     url: String,
@@ -136,7 +135,6 @@ pub async fn check_engine_update(app: AppHandle) -> Result<EngineUpdateResult, S
         .map_err(|e| e.to_string())
 }
 
-// 【修复】匹配前端设置页面的 new_config 传参（强制映射前台传来的 { new_config: ... } ）
 #[command(rename_all = "snake_case")]
 pub async fn update_config(new_config: Config, state: State<'_, AppState>) -> Result<(), String> {
     let mut config = state.config.lock().await;

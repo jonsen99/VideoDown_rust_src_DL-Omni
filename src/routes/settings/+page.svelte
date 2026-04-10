@@ -49,7 +49,6 @@
     </div>
   </section>
 
-  <!-- 恢复引擎配置 -->
   <section class="space-y-4">
     <h3 class="text-xs font-bold text-zinc-500 uppercase tracking-wider">引擎与网络控制</h3>
     
@@ -133,6 +132,20 @@
           value={config.max_threads_per_task}
           oninput={(e) => configStore.update({ max_threads_per_task: parseInt(e.currentTarget.value) })}
           class="w-full accent-accent-blue"
+        />
+      </div>
+
+      <hr class="border-zinc-800">
+
+      <div>
+        <div class="text-sm font-medium text-zinc-200 mb-2">网络代理 (Proxy)</div>
+        <div class="text-xs text-zinc-500 mb-3">支持 HTTP/SOCKS5，用于 GitHub 更新及资源解析下载（留空为直连）。</div>
+        <input 
+          type="text" 
+          class="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-sm text-zinc-100 outline-none focus:border-accent-blue transition-colors"
+          placeholder="例如: http://127.0.0.1:7890"
+          bind:value={configStore.settings.proxy_url}
+          onchange={() => configStore.update({ proxy_url: configStore.settings.proxy_url })}
         />
       </div>
       

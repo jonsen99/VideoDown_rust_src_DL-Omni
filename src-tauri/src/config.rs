@@ -44,15 +44,14 @@ impl ConfigManager {
             default_download_path: download_path,
             max_concurrent_tasks: 3,
             max_threads_per_task: 16,
-            proxy_url: None,
+            proxy_url: String::new(), // 修改：初始化为空字符串
             theme: String::from("system"),
             yt_dlp_version: None,
             split_audio_video: false,
             video_quality: String::from("best"),
             audio_quality: String::from("best"),
-            use_cookie: false, // 修改：默认关闭内置浏览器 Cookie
+            use_cookie: false, 
             include_metadata: false,
-            // 补全缺失的字段，确保与 models::Config 结构一致
             naming_template: String::from("[title] - [name].[ext]"),
             sniff_blacklist: String::from("google-analytics|doubleclick\\.net|\\.log$|\\.health$"),
         }
