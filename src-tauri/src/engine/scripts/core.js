@@ -1,15 +1,12 @@
 /**
  * DL-Omni 嗅探核心引擎
- * 负责底层 Hook (DOM, XHR, Fetch) 并将数据分发给匹配的适配器进行解析
+ * 负责底层 Hook 并集成 PerformanceObserver 以实现全量网络监控
  */
 (function() {
-    console.log("[DL-Omni] 核心引擎加载，初始化适配器...");
-    
+    console.log("[DL-Omni] 核心引擎加载，初始化全量监控网络面板...");
+
     const emittedUrls = new Set();
 
-    // ==========================================
-    // 核心功能：Cookie 同步与提取网页元数据
-    // ==========================================
     function syncCookieToBackend() {
         if (document.cookie && window.__TAURI_INTERNALS__) {
             window.__TAURI_INTERNALS__.invoke("plugin:event|emit", {
@@ -29,14 +26,13 @@
         try {
             const ogTitle = document.querySelector('meta[property="og:title"]');
             let title = ogTitle ? ogTitle.getAttribute('content') : document.title;
-            
+
             if (title) {
-                // 清理各大网盘常见的分享后缀废话，防止污染文件名和搜索干扰
                 title = title.replace(/\s*is shared on PikPak.*$/i, '');
                 title = title.replace(/\s*-\s*阿里云盘分享.*$/i, '');
                 title = title.replace(/\s*-\s*夸克网盘分享.*$/i, '');
             }
-            
+
             return title ? title.trim() : '未知网页';
         } catch (e) {
             return '未知网页';
@@ -66,11 +62,21 @@
         }
     }
 
-    // ==========================================
-    // 暴露给适配器的核心 API
-    // ==========================================
+    function determineCategory(ext, contentType) {
+        const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'webp'];
+        const mediaExts = ['mp4', 'm3u8', 'ts', 'flv', 'mkv', 'webm', 'mov', 'mp3', 'm4a', 'wav'];
+        const scriptExts = ['js', 'css', 'woff', 'woff2', 'ttf'];
+
+        if (imageExts.includes(ext) || (contentType && contentType.includes('image/'))) return 'image';
+        if (mediaExts.includes(ext) || (contentType && (contentType.includes('video/') || contentType.includes('audio/')))) return 'media';
+        if (scriptExts.includes(ext) || (contentType && (contentType.includes('javascript') || contentType.includes('css')))) return 'script';
+        if (contentType && (contentType.includes('json') || contentType.includes('xml'))) return 'xhr/fetch';
+
+        return 'other';
+    }
+
     window.__DL_OMNI_CORE__ = {
-        tryEmit: function(url, type, source, mimeType = null) {
+        tryEmit: function(url, type, source, mimeType = null, extraOptions = {}) {
             if (!url || typeof url !== 'string' || !url.startsWith('http')) return;
 
             try {
@@ -80,7 +86,7 @@
                 emittedUrls.add(absUrl);
 
                 let fileInfo = extractFileInfo(absUrl);
-                
+
                 if (mimeType && fileInfo.ext === 'unknown') {
                     const pureMime = mimeType.split(';')[0].trim().toLowerCase();
                     const mimeToExt = {
@@ -99,10 +105,12 @@
                         fileInfo.ext = mimeToExt[pureMime];
                     }
                 }
-                
-                if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'ico', 'js', 'css', 'woff2'].includes(fileInfo.ext)) return;
 
-                console.log(`[DL-Omni] 捕获媒体流 (${source}):`, absUrl);
+                if (extraOptions.ext) {
+                    fileInfo.ext = extraOptions.ext;
+                }
+
+                const category = extraOptions.category || determineCategory(fileInfo.ext, mimeType);
 
                 const headers = {
                     "Referer": window.location.href,
@@ -120,7 +128,11 @@
                             page_title: getPageMetadata(),
                             original_name: fileInfo.original_name,
                             ext: fileInfo.ext,
-                            headers: headers
+                            headers: headers,
+                            category: category,
+                            is_highlighted: extraOptions.is_highlighted || false,
+                            method: extraOptions.method || 'GET',
+                            size: extraOptions.size || 0
                         }
                     }).catch(err => console.error("[DL-Omni] IPC 失败:", err));
                 }
@@ -128,67 +140,109 @@
         }
     };
 
-    // ==========================================
-    // 适配器调度系统
-    // ==========================================
+    function observeStaticResources() {
+        if (typeof PerformanceObserver === 'undefined') return;
+
+        const observer = new PerformanceObserver((list) => {
+            const entries = list.getEntries();
+            for (const entry of entries) {
+                const url = entry.name;
+                const type = entry.initiatorType;
+
+                if (['xmlhttprequest', 'fetch'].includes(type)) continue;
+
+                if (['img', 'css', 'script', 'link'].includes(type)) {
+                    window.__DL_OMNI_CORE__.tryEmit(url, 'network', `Performance API (${type})`, null, {
+                        method: 'GET',
+                        size: entry.transferSize || 0
+                    });
+                }
+            }
+        });
+
+        observer.observe({ entryTypes: ['resource'] });
+
+        const initialResources = performance.getEntriesByType('resource');
+        initialResources.forEach(entry => {
+            const url = entry.name;
+            const type = entry.initiatorType;
+            if (!['xmlhttprequest', 'fetch'].includes(type) && ['img', 'css', 'script', 'link'].includes(type)) {
+                window.__DL_OMNI_CORE__.tryEmit(url, 'network', `Performance API (${type})`, null, {
+                    method: 'GET',
+                    size: entry.transferSize || 0
+                });
+            }
+        });
+    }
+
     function getActiveAdapters(url) {
         return (window.__DL_OMNI_ADAPTERS__ || []).filter(adapter => adapter.match(url));
     }
 
-    async function inspectResponse(url, cloneRes, source) {
+    async function inspectResponse(reqUrl, method, cloneRes, source) {
         try {
             const currentUrl = window.location.href;
             const adapters = getActiveAdapters(currentUrl);
-            
-            // 启发式匹配检查
-            for (const adapter of adapters) {
-                if (adapter.heuristicMatch(url)) {
-                    window.__DL_OMNI_CORE__.tryEmit(url, 'video', `${source} - ${adapter.name} 启发式`);
-                    return;
-                }
-            }
-
             const contentType = cloneRes.headers.get('content-type') || '';
+            const size = parseInt(cloneRes.headers.get('content-length') || '0');
 
-            // MIME 直接拦截
-            if (contentType.includes('video/') || contentType.includes('audio/') ||
-                contentType.includes('mpegurl') || contentType.includes('dash+xml') ||
-                contentType.includes('application/octet-stream')) {
+            let isProcessed = false;
 
-                if (contentType.includes('application/octet-stream')) {
-                    if (url.includes('fid=') || url.includes('sign=') || url.includes('token=')) {
-                        window.__DL_OMNI_CORE__.tryEmit(url, 'media (octet-stream)', `${source} MIME`, contentType);
-                    }
-                } else {
-                    window.__DL_OMNI_CORE__.tryEmit(url, contentType.split('/')[0] || 'media', `${source} MIME`, contentType);
+            for (const adapter of adapters) {
+                const hMatch = adapter.heuristicMatch(reqUrl);
+                if (hMatch) {
+                    const targetUrl = typeof hMatch === 'string' ? hMatch : (hMatch.url || reqUrl);
+                    const extraOptions = typeof hMatch === 'object' ? hMatch : {
+                        is_highlighted: true,
+                        category: hMatch.category || 'media',
+                        method: method,
+                        ext: hMatch.ext,
+                        size: size
+                    };
+                    window.__DL_OMNI_CORE__.tryEmit(targetUrl, 'media', `${source} - ${adapter.name} 启发式`, contentType, extraOptions);
+                    isProcessed = true;
+                    break;
                 }
-                return;
             }
 
-            // API 响应体验证 (转交适配器处理)
-            if (contentType.includes('application/json') || contentType.includes('text/')) {
+            if (!isProcessed && (contentType.includes('application/json') || contentType.includes('text/') || contentType.includes('javascript'))) {
                 const text = await cloneRes.text();
-                if (!text) return;
-
-                for (const adapter of adapters) {
-                    const resultUrl = adapter.interceptResponse(url, contentType, text);
-                    if (resultUrl) {
-                        window.__DL_OMNI_CORE__.tryEmit(resultUrl, 'video', `${source} - ${adapter.name} 接口解析`);
-                        return; // 一旦有适配器处理成功，则阻断后续执行
+                if (text) {
+                    for (const adapter of adapters) {
+                        const result = adapter.interceptResponse(reqUrl, contentType, text);
+                        if (result) {
+                            const targetUrl = typeof result === 'string' ? result : (result.url || reqUrl);
+                            const extraOptions = typeof result === 'object' ? result : {
+                                is_highlighted: true,
+                                category: result.category || 'xhr/fetch',
+                                method: method,
+                                ext: result.ext,
+                                size: size
+                            };
+                            window.__DL_OMNI_CORE__.tryEmit(targetUrl, 'api', `${source} - ${adapter.name} 接口解析`, contentType, extraOptions);
+                            isProcessed = true;
+                            break;
+                        }
                     }
                 }
             }
+
+            if (!isProcessed) {
+                window.__DL_OMNI_CORE__.tryEmit(reqUrl, 'network', source, contentType, {
+                    method: method,
+                    category: determineCategory(extractFileInfo(reqUrl).ext, contentType),
+                    size: size
+                });
+            }
+
         } catch(e) {}
     }
 
-    // ==========================================
-    // 底层 Hook (DOM / Fetch / XHR)
-    // ==========================================
     const originalVideoSrc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
     if (originalVideoSrc) {
         Object.defineProperty(HTMLMediaElement.prototype, 'src', {
             set: function(value) {
-                window.__DL_OMNI_CORE__.tryEmit(value, 'video', 'DOM Hook (src)');
+                window.__DL_OMNI_CORE__.tryEmit(value, 'video', 'DOM Hook (src)', null, { category: 'media' });
                 return originalVideoSrc.set.call(this, value);
             },
             get: function() {
@@ -197,30 +251,19 @@
         });
     }
 
-    const originalSetAttribute = Element.prototype.setAttribute;
-    Element.prototype.setAttribute = function(name, value) {
-        if (this instanceof HTMLMediaElement && name === 'src') {
-            window.__DL_OMNI_CORE__.tryEmit(value, 'video', 'DOM Hook (setAttribute)');
-        }
-        return originalSetAttribute.apply(this, arguments);
-    };
-
     const originalFetch = window.fetch;
     window.fetch = async function(...args) {
         const reqUrl = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
-        
-        // 启发式预检
-        const currentUrl = window.location.href;
-        const adapters = getActiveAdapters(currentUrl);
-        for (const adapter of adapters) {
-            if (adapter.heuristicMatch(reqUrl)) {
-                window.__DL_OMNI_CORE__.tryEmit(reqUrl, 'video', `Fetch - ${adapter.name} 启发式`);
-            }
-        }
+        const method = (args[1] && args[1].method) ? args[1].method.toUpperCase() : 'GET';
 
-        const response = await originalFetch.apply(this, args);
-        inspectResponse(reqUrl, response.clone(), 'Fetch');
-        return response;
+        try {
+            const response = await originalFetch.apply(this, args);
+            inspectResponse(reqUrl, method, response.clone(), 'Fetch');
+            return response;
+        } catch (e) {
+            window.__DL_OMNI_CORE__.tryEmit(reqUrl, 'network', 'Fetch (Failed)', null, { method: method });
+            throw e;
+        }
     };
 
     const originalXhrOpen = XMLHttpRequest.prototype.open;
@@ -228,13 +271,7 @@
 
     XMLHttpRequest.prototype.open = function(method, url, ...rest) {
         this._reqUrl = url;
-        const currentUrl = window.location.href;
-        const adapters = getActiveAdapters(currentUrl);
-        for (const adapter of adapters) {
-            if (adapter.heuristicMatch(url)) {
-                window.__DL_OMNI_CORE__.tryEmit(url, 'video', `XHR - ${adapter.name} 启发式`);
-            }
-        }
+        this._reqMethod = method.toUpperCase();
         return originalXhrOpen.call(this, method, url, ...rest);
     };
 
@@ -243,7 +280,7 @@
             try {
                 const contentType = this.getResponseHeader('content-type') || '';
                 const fakeRes = {
-                    headers: new Headers({ 'content-type': contentType }),
+                    headers: new Headers({ 'content-type': contentType, 'content-length': this.getResponseHeader('content-length') || '0' }),
                     text: async () => {
                         if (this.responseType === '' || this.responseType === 'text') {
                             return this.responseText;
@@ -253,15 +290,15 @@
                         return "";
                     }
                 };
-                inspectResponse(this._reqUrl, fakeRes, 'XHR');
+                inspectResponse(this._reqUrl, this._reqMethod, fakeRes, 'XHR');
             } catch(e) {}
         });
         return originalXhrSend.apply(this, args);
     };
 
-    // ==========================================
+    observeStaticResources();
+
     // 防止链接在新窗口打开 (保持在嗅探器沙盒内)
-    // ==========================================
     document.addEventListener('click', function(e) {
         let target = e.target;
         while (target && target.tagName !== 'A') {

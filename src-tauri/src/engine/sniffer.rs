@@ -44,21 +44,23 @@ pub async fn init_sniffer(url: String, app: AppHandle) -> Result<(), String> {
         let _ = win.close();
     }
 
-    // 利用 Rust 宏在编译期将 JS 文件内容硬编码到二进制文件中，保持后端代码干净整洁
+    // 利用 Rust 宏在编译期将 JS 文件内容硬编码到二进制文件中
     let script_base = include_str!("scripts/adapters/base.js");
     let script_douyin = include_str!("scripts/adapters/douyin.js");
     let script_pikpak = include_str!("scripts/adapters/pikpak.js");
     let script_aliyun = include_str!("scripts/adapters/aliyun.js");
+    let script_gdstudio = include_str!("scripts/adapters/gdstudio.js");
     let script_universal = include_str!("scripts/adapters/universal.js");
     let script_core = include_str!("scripts/core.js");
 
     // 组合注入脚本，必须保证注入顺序：基类 -> 独立适配器 -> 兜底适配器 -> 核心引擎
     let init_script = format!(
-        "{}\n{}\n{}\n{}\n{}\n{}",
+        "{}\n{}\n{}\n{}\n{}\n{}\n{}",
         script_base,
         script_douyin,
         script_pikpak,
         script_aliyun,
+        script_gdstudio,
         script_universal,
         script_core
     );

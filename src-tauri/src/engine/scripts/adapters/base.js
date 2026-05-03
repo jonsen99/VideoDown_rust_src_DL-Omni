@@ -23,10 +23,10 @@ class SnifferAdapter {
      * 启发式 URL 检查（例如拦截带有特定参数的直接请求）
      * 用于在发起 Fetch/XHR 请求前直接判定是否为目标流媒体
      * @param {string} reqUrl 发起的网络请求 URL
-     * @returns {boolean} 是否为目标媒体流
+     * @returns {object|null} 匹配成功返回格式化信息对象，否则返回 null
      */
     heuristicMatch(reqUrl) {
-        return false;
+        return null;
     }
 
     /**
@@ -35,7 +35,7 @@ class SnifferAdapter {
      * @param {string} reqUrl 请求的 API URL
      * @param {string} contentType 响应类型 (如 application/json)
      * @param {string|object} responseData 响应数据 (文本或对象)
-     * @returns {string|null} 返回提取到的真实媒体流 URL，若无则返回 null
+     * @returns {object|null} 返回结构化对象，若无则返回 null
      */
     interceptResponse(reqUrl, contentType, responseData) {
         return null;

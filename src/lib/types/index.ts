@@ -1,13 +1,13 @@
 /**
  * 任务的生命周期状态
  */
-export type TaskStatus = 
-  | 'pending'       // 解析/等待中
-  | 'downloading'   // 下载中
-  | 'paused'        // 已暂停
-  | 'merging'       // 合并中 (如音频+视频)
-  | 'error'         // 错误
-  | 'completed';    // 已完成
+export type TaskStatus =
+    | 'pending'       // 解析/等待中
+    | 'downloading'   // 下载中
+    | 'paused'        // 已暂停
+    | 'merging'       // 合并中 (如音频+视频)
+    | 'error'         // 错误
+    | 'completed';    // 已完成
 
 /**
  * 核心下载任务数据结构
@@ -60,13 +60,13 @@ export interface Config {
   proxy_url: string;
   theme: 'dark' | 'light' | 'system';
   yt_dlp_version?: string;
-  split_audio_video: boolean;  
-  video_quality: string;       
-  audio_quality: string;       
-  use_cookie: boolean;         
+  split_audio_video: boolean;
+  video_quality: string;
+  audio_quality: string;
+  use_cookie: boolean;
   include_metadata: boolean;
-  naming_template: string;     
-  sniff_blacklist: string;     
+  naming_template: string;
+  sniff_blacklist: string;
 }
 
 /**
@@ -74,12 +74,12 @@ export interface Config {
  */
 export interface MediaFormat {
   format_id: string;
-  ext: string;               
-  resolution: string;        
-  filesize?: number;         
-  vcodec: string;            
-  acodec: string;            
-  format_note?: string;      
+  ext: string;
+  resolution: string;
+  filesize?: number;
+  vcodec: string;
+  acodec: string;
+  format_note?: string;
 }
 
 /**
@@ -102,7 +102,7 @@ export interface MediaInfo {
   duration: number;
   thumbnail: string;
   formats: MediaFormat[];
-  playlist_entries?: PlaylistItem[]; 
+  playlist_entries?: PlaylistItem[];
 }
 
 /**
@@ -110,10 +110,14 @@ export interface MediaInfo {
  */
 export interface SniffedResource {
   url: string;
-  type: string;             
-  filename: string;         
-  page_title?: string;      
-  original_name?: string;   
-  ext?: string;             
-  headers?: Record<string, string>; 
+  type: string;
+  filename: string;
+  page_title?: string;
+  original_name?: string;
+  ext?: string;
+  headers?: Record<string, string>;
+  category?: string;
+  is_highlighted?: boolean;
+  method?: string;
+  size?: number;
 }

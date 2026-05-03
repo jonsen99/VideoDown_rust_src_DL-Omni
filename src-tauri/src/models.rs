@@ -43,8 +43,8 @@ pub struct Task {
     pub thumbnail: Option<String>,
     pub status: TaskStatus,
     pub format_id: String,
-    pub playlist_items: Option<String>, 
-    pub http_headers: Option<String>, 
+    pub playlist_items: Option<String>,
+    pub http_headers: Option<String>,
     pub total_bytes: u64,
     pub downloaded_bytes: u64,
     pub speed: f64,
@@ -61,7 +61,7 @@ impl Task {
         thumbnail: Option<String>,
         format_id: String,
         playlist_items: Option<String>,
-        http_headers: Option<String>, 
+        http_headers: Option<String>,
     ) -> Self {
         Self {
             id,
@@ -118,30 +118,32 @@ pub struct Config {
     pub max_concurrent_tasks: u8,
     pub max_threads_per_task: u8,
     #[serde(default)]
-    pub proxy_url: String,         // 修改：统一为 String 防止序列化异常
+    pub proxy_url: String,
     pub theme: String,
     pub yt_dlp_version: Option<String>,
     pub split_audio_video: bool,
     pub video_quality: String,
     pub audio_quality: String,
-    pub use_cookie: bool,          
+    pub use_cookie: bool,
     pub include_metadata: bool,
-    pub naming_template: String,   
-    pub sniff_blacklist: String,   
+    pub naming_template: String,
+    pub sniff_blacklist: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SniffedResource {
     pub url: String,
-    pub r#type: String, 
+    pub r#type: String,
     pub filename: String,
-    pub page_title: Option<String>,     
-    pub original_name: Option<String>,  
-    pub ext: Option<String>,            
-    pub headers: Option<std::collections::HashMap<String, String>>, 
+    pub page_title: Option<String>,
+    pub original_name: Option<String>,
+    pub ext: Option<String>,
+    pub headers: Option<std::collections::HashMap<String, String>>,
+    pub category: Option<String>,
+    pub is_highlighted: Option<bool>,
+    pub method: Option<String>,
+    pub size: Option<u64>,
 }
-
-// ================= 恢复：断点续传状态持久化模型 =================
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChunkState {
